@@ -23,6 +23,9 @@ import {
 import type { DashboardStats, PolicyAlert, SchemeAnalytics, CandidateListItem, EnrollmentListItem, ReportFormat } from "@/lib/types";
 import { useRequireAuth } from "@/lib/hooks/useAuthGuard";
 import Toast from "@/components/ui/Toast";
+import ScrollProgress from "@/components/motion/ScrollProgress";
+import { StaggerGroup, StaggerItem } from "@/components/motion/Stagger";
+import AuroraBackground from "@/components/motion/AuroraBackground";
 
 // ── CountUp animated counter ────────────────────────────────────────────────
 
@@ -55,6 +58,22 @@ function CountUp({ end, suffix = "", duration = 1200, decimals = 0 }: {
       {decimals > 0 ? display.toFixed(decimals) : Math.round(display).toLocaleString()}
       {suffix}
     </span>
+  );
+}
+
+// ── Mini stat tile for section strips ───────────────────────────────────────
+
+function MiniStat({ icon: Icon, label, value, tone }: { icon: typeof CheckCircle2; label: string; value: string; tone: string }) {
+  return (
+    <div className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
+      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${tone} text-white shadow-md`}>
+        <Icon className="h-4 w-4" />
+      </span>
+      <div className="min-w-0">
+        <p className="text-lg font-bold leading-tight text-slate-800">{value}</p>
+        <p className="truncate text-xs text-slate-400">{label}</p>
+      </div>
+    </div>
   );
 }
 
@@ -169,12 +188,12 @@ function ReportButton({
 // ── KPI card config ─────────────────────────────────────────────────────────
 
 const kpiConfig = [
-  { label: "Total Candidates", key: "total_candidates" as keyof DashboardStats, icon: Users, tint: "from-brand-500 to-indigo-500", text: "text-brand-600", href: "#" },
-  { label: "Training Partners", key: "total_training_partners" as keyof DashboardStats, icon: Building2, tint: "from-emerald-500 to-teal-500", text: "text-emerald-600", href: "#" },
-  { label: "Active Employers", key: "total_employers" as keyof DashboardStats, icon: Briefcase, tint: "from-violet-500 to-fuchsia-500", text: "text-violet-600", href: "#" },
-  { label: "Enrollments", key: "total_enrollments" as keyof DashboardStats, icon: GraduationCap, tint: "from-orange-500 to-amber-500", text: "text-orange-600", href: "#" },
-  { label: "Courses", key: "total_courses" as keyof DashboardStats, icon: BookOpen, tint: "from-cyan-500 to-sky-500", text: "text-cyan-600", href: "#" },
-  { label: "Placement Rate", key: "overall_placement_rate" as keyof DashboardStats, icon: TrendingUp, tint: "from-sky-500 to-cyan-500", text: "text-sky-600", href: "#", isPercent: true },
+  { label: "Total Candidates", key: "total_candidates" as keyof DashboardStats, icon: Users, tint: "from-brand-500 to-indigo-500", text: "text-brand-600", href: "/gov/candidates" },
+  { label: "Training Partners", key: "total_training_partners" as keyof DashboardStats, icon: Building2, tint: "from-emerald-500 to-teal-500", text: "text-emerald-600", href: "/gov/manage" },
+  { label: "Active Employers", key: "total_employers" as keyof DashboardStats, icon: Briefcase, tint: "from-violet-500 to-fuchsia-500", text: "text-violet-600", href: "/gov/manage" },
+  { label: "Enrollments", key: "total_enrollments" as keyof DashboardStats, icon: GraduationCap, tint: "from-orange-500 to-amber-500", text: "text-orange-600", href: "/gov/manage" },
+  { label: "Courses", key: "total_courses" as keyof DashboardStats, icon: BookOpen, tint: "from-cyan-500 to-sky-500", text: "text-cyan-600", href: "/gov/manage" },
+  { label: "Placement Rate", key: "overall_placement_rate" as keyof DashboardStats, icon: TrendingUp, tint: "from-sky-500 to-cyan-500", text: "text-sky-600", href: "/gov/scheme-roi", isPercent: true },
 ];
 
 // ── Chart tooltip style ─────────────────────────────────────────────────────
@@ -381,6 +400,61 @@ export default function GovDashboard() {
   // ── NEW: Scheme progress widgets (reuse schemes) ────────────────────────
   const schemesForProgress = useMemo(() => schemes.slice(0, 6), [schemes]);
 
+  /* ── Derived: Scheme throughput (top by enrollment) ──────────────────── */
+  const schemeThroughput = useMemo(() => {
+    return [...schemes]
+      .sort((a, b) => b.total_enrolled - a.total_enrolled)
+      .slice(0, 5)
+      .map((s) => ({
+        name: s.scheme_id.length > 12 ? s.scheme_id.slice(0, 11) + "\u2026" : s.scheme_id,
+        Enrolled: s.total_enrolled,
+        Completed: s.total_completed,
+        ["Placed (6m)"]: s.total_placed_6m,
+      }));
+  }, [schemes]);
+
+  /* ── Derived: Ecosystem growth (employers + partners per month) ──────── */
+  const ecosystemGrowth = useMemo(() => {
+    const map: Record<string, { Employers: number; Partners: number }> = {};
+    const add = (createdAt: string | null, kind: "Employers" | "Partners") => {
+      if (!createdAt) return;
+      const d = new Date(createdAt);
+      if (isNaN(d.getTime())) return;
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      map[key] = map[key] || { Employers: 0, Partners: 0 };
+      map[key][kind] += 1;
+    };
+    for (const e of employers) add(e.created_at, "Employers");
+    for (const p of partners) add(p.created_at, "Partners");
+    const keys = Object.keys(map).sort().slice(-6);
+    if (keys.length === 0) return [];
+    return keys.map((key) => {
+      const [y, m] = key.split("-").map(Number);
+      return {
+        month: new Date(y, m - 1).toLocaleDateString("en-IN", { month: "short" }),
+        Employers: map[key]?.Employers ?? 0,
+        Partners: map[key]?.Partners ?? 0,
+      };
+    });
+  }, [employers, partners]);
+
+  /* ── Derived: Throughput headline numbers ────────────────────────────── */
+  const totalPlaced6m = useMemo(
+    () => schemes.reduce((sum, s) => sum + s.total_placed_6m, 0),
+    [schemes],
+  );
+  const avgCompletionRate = useMemo(() => {
+    const vals = schemes
+      .map((s) => s.completion_rate)
+      .filter((v): v is number => v !== null);
+    return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : 0;
+  }, [schemes]);
+  const bestRoiScheme = useMemo(() => {
+    const withRoi = schemes.filter((s) => s.roi_score !== null);
+    if (withRoi.length === 0) return null;
+    return withRoi.reduce((best, s) => (s.roi_score! > (best.roi_score ?? 0) ? s : best), withRoi[0]);
+  }, [schemes]);
+
   // ── NEW: Scheme-by-state comparison ──────────────────────────────────────
   const stateComparison = useMemo(() => {
     if (schemes.length === 0) return { chartData: [], tableRows: [], states: [], topSchemes: [] };
@@ -447,8 +521,25 @@ export default function GovDashboard() {
     return { chartData, tableRows: filteredRows, states, topSchemes };
   }, [schemes]);
 
+  // ── NEW: National outcome funnel ──────────────────────────────────────────
+  const outcomeFunnel = useMemo(() => {
+    const steps = [
+      { key: "Registered", value: stats?.total_candidates ?? 0, icon: Users, tint: "from-indigo-500 to-violet-500", chip: "bg-indigo-100 text-indigo-700" },
+      { key: "Enrolled", value: stats?.total_enrollments ?? 0, icon: GraduationCap, tint: "from-violet-500 to-fuchsia-500", chip: "bg-violet-100 text-violet-700" },
+      { key: "Completed", value: schemes.reduce((s, x) => s + x.total_completed, 0), icon: CheckCircle2, tint: "from-fuchsia-500 to-brand-500", chip: "bg-fuchsia-100 text-fuchsia-700" },
+      { key: "Placed in 12 months", value: schemes.reduce((s, x) => s + (x.total_placed_12m || x.total_placed_6m || x.total_placed_3m), 0), icon: Briefcase, tint: "from-brand-500 to-amber-500", chip: "bg-amber-100 text-amber-700" },
+    ];
+    const max = Math.max(...steps.map((s) => s.value), 1);
+    return steps.map((s, i) => ({
+      ...s,
+      width: Math.max(6, Math.round((s.value / max) * 100)),
+      conversion: i === 0 ? null : steps[i - 1].value > 0 ? Math.round((s.value / steps[i - 1].value) * 100) : null,
+    }));
+  }, [stats, schemes]);
+
   return (
     <div className="flex min-h-screen">
+      <ScrollProgress />
       <Sidebar />
       <div className="flex-1">
         <TopBar title="Admin Console" subtitle="National outcome analytics" />
@@ -457,8 +548,9 @@ export default function GovDashboard() {
           {toast && <Toast message={toast.message} tone={toast.tone} />}
 
           {/* ── Welcome Banner ──────────────────────────────────────────── */}
-          <div className="glass animate-fade-up overflow-hidden p-6">
-            <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="glass animate-fade-up relative overflow-hidden p-6">
+            <AuroraBackground subtle />
+            <div className="relative flex flex-wrap items-center justify-between gap-4">
               <div className="flex items-center gap-4">
                 <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-slate-800 via-brand-700 to-brand-500 shadow-lg shadow-brand-700/30">
                   <ShieldCheck className="h-6 w-6 text-white" />
@@ -479,7 +571,10 @@ export default function GovDashboard() {
               </div>
               <div className="flex items-center gap-3">
                 <span className="chip bg-emerald-100 text-emerald-700">
-                  <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                  <span className="relative mr-1 inline-flex h-2 w-2 items-center justify-center">
+                    <span className="animate-pulse-ring absolute inline-flex h-full w-full rounded-full bg-emerald-500" />
+                    <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                  </span>
                   Live data
                 </span>
               </div>
@@ -517,31 +612,89 @@ export default function GovDashboard() {
               {Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)}
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-              {kpiConfig.map(({ label, key, icon: Icon, tint, text, href, isPercent }, i) => (
-                <Link
-                  key={label}
-                  href={href}
-                  className="glass card-hover p-5 animate-fade-up"
-                  style={{ animationDelay: `${i * 0.06}s` }}
-                >
-                  <div className={`mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br ${tint} shadow-md`}>
-                    <Icon className="h-5 w-5 text-white" />
-                  </div>
-                  <p className="text-2xl font-bold text-slate-800">
-                    <CountUp end={stats?.[key] ?? 0} suffix={isPercent ? "%" : ""} decimals={isPercent ? 1 : 0} />
-                  </p>
-                  <p className={`text-sm font-medium ${text}`}>{label}</p>
-                  {isPercent && typeof stats?.overall_placement_rate === "number" && (
-                    <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-                      <div
-                        className="h-full rounded-full bg-gradient-to-r from-sky-500 to-cyan-400 transition-all duration-1000 ease-out"
-                        style={{ width: `${stats.overall_placement_rate}%` }}
-                      />
+            <StaggerGroup className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+              {kpiConfig.map(({ label, key, icon: Icon, tint, text, href, isPercent }) => (
+                <StaggerItem key={label}>
+                  <Link
+                    href={href}
+                    className="glass card-hover block h-full p-5"
+                  >
+                    <div className={`mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br ${tint} shadow-md`}>
+                      <Icon className="h-5 w-5 text-white" />
                     </div>
-                  )}
-                </Link>
+                    <p className="text-2xl font-bold text-slate-800">
+                      <CountUp end={stats?.[key] ?? 0} suffix={isPercent ? "%" : ""} decimals={isPercent ? 1 : 0} />
+                    </p>
+                    <p className={`text-sm font-medium ${text}`}>{label}</p>
+                    {isPercent && typeof stats?.overall_placement_rate === "number" && (
+                      <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                        <div
+                          className="h-full rounded-full bg-gradient-to-r from-sky-500 to-cyan-400 transition-all duration-1000 ease-out"
+                          style={{ width: `${stats.overall_placement_rate}%` }}
+                        />
+                      </div>
+                    )}
+                  </Link>
+                </StaggerItem>
               ))}
+            </StaggerGroup>
+          )}
+
+          {/* ── National Outcome Funnel ─────────────────────────────────────── */}
+          {!statsLoading && (
+            <div className="glass p-6 animate-fade-up delay-150">
+              <div className="mb-4 flex items-center justify-between">
+                <h3 className="panel-title">
+                  <TrendingUp className="h-4 w-4 text-brand-600" />
+                  National Outcome Funnel
+                </h3>
+                <span className="chip bg-slate-100 text-slate-600">
+                  {outcomeFunnel.reduce((s, x) => Math.max(s, x.conversion ?? 0), 0) > 0
+                    ? "registered → placed pipeline"
+                    : "awaiting outcome data"}
+                </span>
+              </div>
+
+              <div className="space-y-2">
+                {outcomeFunnel.map((step, i) => (
+                  <div key={step.key}>
+                    {i > 0 && step.conversion !== null && (
+                      <div className="flex items-center gap-2 pl-10 text-[11px] font-medium text-slate-400">
+                        <ChevronRight className="h-3 w-3" />
+                        {step.conversion}% of previous stage
+                      </div>
+                    )}
+                    <div className="flex items-center gap-3 rounded-xl border border-slate-100 bg-white p-3">
+                      <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${step.tint}`}>
+                        <step.icon className="h-4 w-4 text-white" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="mb-1 flex items-center justify-between gap-2">
+                          <span className="truncate text-sm font-semibold text-slate-700">{step.key}</span>
+                          <span className={`chip shrink-0 text-[11px] ${step.chip}`}>
+                            <CountUp end={step.value} />
+                          </span>
+                        </div>
+                        <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-100">
+                          <div
+                            className={`h-full rounded-full bg-gradient-to-r ${step.tint} transition-all duration-700`}
+                            style={{ width: `${step.width}%` }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {outcomeFunnel[outcomeFunnel.length - 1].value > 0 && outcomeFunnel[0].value > 0 && (
+                <p className="mt-3 text-sm text-slate-500">
+                  <span className="font-bold text-slate-700">
+                    {Math.round((outcomeFunnel[outcomeFunnel.length - 1].value / outcomeFunnel[0].value) * 100)}%
+                  </span>{" "}
+                  of all registered candidates are placed within a year of training.
+                </p>
+              )}
             </div>
           )}
 
@@ -651,6 +804,111 @@ export default function GovDashboard() {
                 )}
               </div>
             )}
+          </div>
+
+          {/* ── Throughput & Ecosystem Growth ─────────────────────────────────── */}
+          <div className="animate-fade-up delay-200">
+            <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4 animate-fade-in">
+              <MiniStat icon={BarChart3} label="Active Schemes" value={schemesLoading ? "—" : `${schemes.length}`} tone="from-indigo-500 to-violet-500" />
+              <MiniStat icon={TrendingUp} label="Avg Completion" value={schemesLoading ? "—" : `${avgCompletionRate}%`} tone="from-emerald-500 to-teal-500" />
+              <MiniStat icon={CheckCircle2} label="Placed (6 mo)" value={schemesLoading ? "—" : totalPlaced6m.toLocaleString("en-IN")} tone="from-amber-500 to-orange-500" />
+              <MiniStat icon={Award} label="Best ROI Scheme" value={!schemesLoading && bestRoiScheme ? bestRoiScheme.scheme_id : "—"} tone="from-sky-500 to-cyan-500" />
+            </div>
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+
+            {/* Scheme throughput */}
+            <div className="glass p-6">
+              <h3 className="panel-title mb-1">
+                <BarChart3 className="h-4 w-4 text-emerald-600" />
+                Scheme Throughput
+              </h3>
+              <p className="mb-4 text-sm text-slate-500">
+                Enrolled, completed and placed counts for the top 5 schemes.
+              </p>
+              {schemesLoading ? (
+                <SkeletonChart />
+              ) : schemeThroughput.length === 0 ? (
+                <div className="flex h-64 flex-col items-center justify-center text-slate-400">
+                  <BarChart3 className="mb-2 h-10 w-10 opacity-30" />
+                  <p className="text-sm font-medium">No scheme throughput data yet</p>
+                </div>
+              ) : (
+                <div className="h-64 animate-fade-in">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={schemeThroughput} margin={{ top: 5, right: 10, bottom: 40, left: 0 }} barGap={3}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.18)" vertical={false} />
+                      <XAxis dataKey="name" interval={0} angle={-14} textAnchor="end" tick={{ fontSize: 11, fill: "#64748b" }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} allowDecimals={false} />
+                      <Tooltip {...tooltipStyle} cursor={{ fill: "rgba(16,185,129,0.06)" }} />
+                      <Legend verticalAlign="top" height={36} iconType="circle" iconSize={9} />
+                      <Bar dataKey="Enrolled" fill="#4f46e5" radius={[5, 5, 0, 0]} maxBarSize={28} />
+                      <Bar dataKey="Completed" fill="#10b981" radius={[5, 5, 0, 0]} maxBarSize={28} />
+                      <Bar dataKey="Placed (6m)" fill="#f59e0b" radius={[5, 5, 0, 0]} maxBarSize={28} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </div>
+
+            {/* Ecosystem growth */}
+            <div className="glass p-6">
+              <h3 className="panel-title mb-1">
+                <TrendingUp className="h-4 w-4 text-sky-600" />
+                Ecosystem Growth
+              </h3>
+              <p className="mb-4 text-sm text-slate-500">
+                Employers and training partners registered per month.
+              </p>
+              {employersLoading || partnersLoading ? (
+                <SkeletonChart />
+              ) : ecosystemGrowth.length === 0 ? (
+                <div className="flex h-64 flex-col items-center justify-center text-slate-400">
+                  <TrendingUp className="mb-2 h-10 w-10 opacity-30" />
+                  <p className="text-sm font-medium">No ecosystem activity yet</p>
+                </div>
+              ) : (
+                <div className="h-64 animate-fade-in">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={ecosystemGrowth} margin={{ top: 5, right: 10, bottom: 0, left: 0 }}>
+                      <defs>
+                        <linearGradient id="gradEcoEmp" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.3} />
+                          <stop offset="95%" stopColor="#4f46e5" stopOpacity={0} />
+                        </linearGradient>
+                        <linearGradient id="gradEcoPar" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#14b8a6" stopOpacity={0.3} />
+                          <stop offset="95%" stopColor="#14b8a6" stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.18)" vertical={false} />
+                      <XAxis dataKey="month" tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} allowDecimals={false} />
+                      <Tooltip {...tooltipStyle} />
+                      <Legend verticalAlign="top" height={36} iconType="circle" iconSize={9} />
+                      <Area
+                        type="monotone"
+                        dataKey="Employers"
+                        stroke="#4f46e5"
+                        strokeWidth={2.5}
+                        fill="url(#gradEcoEmp)"
+                        dot={false}
+                        activeDot={{ r: 5, strokeWidth: 2, stroke: "#fff" }}
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="Partners"
+                        stroke="#14b8a6"
+                        strokeWidth={2.5}
+                        fill="url(#gradEcoPar)"
+                        dot={false}
+                        activeDot={{ r: 5, strokeWidth: 2, stroke: "#fff" }}
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </div>
+          </div>
           </div>
 
           {/* ── Bottom Row: Scheme Performance + Policy Alerts ──────────── */}

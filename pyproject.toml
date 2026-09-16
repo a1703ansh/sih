@@ -20,6 +20,6 @@ plugins = ["pydantic.mypy", "sqlalchemy.ext.mypy.plugin"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["backend/tests", "workers/tests"]
 asyncio_mode = "auto"
 addopts = "-v --tb=short --cov=app --cov-report=term-missing"

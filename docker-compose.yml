@@ -1,5 +1,5 @@
-services:
-  # ─── PostgreSQL ───
+﻿services:
+  # â”€â”€â”€ PostgreSQL â”€â”€â”€
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD: skilltrace_dev_secret
       POSTGRES_DB: skilltrace
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -17,12 +17,12 @@ services:
       timeout: 5s
       retries: 5
 
-  # ─── Redis ───
+  # â”€â”€â”€ Redis â”€â”€â”€
   redis:
     image: redis:7-alpine
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "6380:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -31,7 +31,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # ─── Elasticsearch ───
+  # â”€â”€â”€ Elasticsearch â”€â”€â”€
   elasticsearch:
     image: elasticsearch:8.14.0
     restart: unless-stopped
@@ -49,7 +49,7 @@ services:
       timeout: 10s
       retries: 10
 
-  # ─── Backend (FastAPI) ───
+  # â”€â”€â”€ Backend (FastAPI) â”€â”€â”€
   backend:
     build:
       context: ./backend
@@ -72,7 +72,7 @@ services:
     command: >
       uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
-  # ─── Celery Worker ───
+  # â”€â”€â”€ Celery Worker â”€â”€â”€
   worker:
     build:
       context: ./backend
@@ -83,6 +83,8 @@ services:
       POSTGRES_HOST: postgres
       REDIS_HOST: redis
       ELASTICSEARCH_URL: http://elasticsearch:9200
+      PYTHONPATH: /
+    working_dir: /
     depends_on:
       postgres:
         condition: service_healthy
@@ -97,7 +99,7 @@ services:
       --concurrency=4
       -Q default,surveys,scraper,nlp,notifications
 
-  # ─── Celery Beat (Scheduler) ───
+  # â”€â”€â”€ Celery Beat (Scheduler) â”€â”€â”€
   beat:
     build:
       context: ./backend
@@ -107,6 +109,8 @@ services:
     environment:
       POSTGRES_HOST: postgres
       REDIS_HOST: redis
+      PYTHONPATH: /
+    working_dir: /
     depends_on:
       redis:
         condition: service_healthy
@@ -117,7 +121,7 @@ services:
       celery -A workers.celery_app:app beat
       --loglevel=info
 
-  # ─── Flower (Worker Monitor) ───
+  # â”€â”€â”€ Flower (Worker Monitor) â”€â”€â”€
   flower:
     build:
       context: ./backend
@@ -129,17 +133,18 @@ services:
     environment:
       POSTGRES_HOST: postgres
       REDIS_HOST: redis
+      PYTHONPATH: /
+    working_dir: /
     depends_on:
       redis:
         condition: service_healthy
     volumes:
       - ./workers:/workers
     command: >
-      celery -A workers.celery_app:app flower
-      --port=5555
-      --broker_api=redis://redis:6379/0
+      sh -c "pip install -q flower==2.0.1 &&
+      python -m flower flower --port=5555"
 
-  # ─── Frontend (Next.js) ───
+  # â”€â”€â”€ Frontend (Next.js) â”€â”€â”€
   frontend:
     build:
       context: ./frontend

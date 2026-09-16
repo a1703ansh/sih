@@ -80,19 +80,19 @@ export default function Sidebar() {
     href === "/" ? pathname === "/" : pathname.startsWith(href);
 
   return (
-    <aside className="sticky top-0 h-screen w-64 shrink-0 border-r border-white/10 bg-[#0d1325]/70 p-4 backdrop-blur-2xl">
+    <aside className="sticky top-0 h-screen w-64 shrink-0 border-r bd bg-[var(--shell-bg)] p-4 backdrop-blur-2xl">
       {/* Brand */}
       <Link href="/" className="flex items-center gap-3 mb-1 px-2 py-3">
         <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-brand-500 shadow-lg shadow-violet-600/40">
-          <LogoIcon className="h-5 w-5 text-white" />
+          <LogoIcon className="h-5 w-5 t-strong" />
         </div>
         <div>
-          <p className="bg-gradient-to-r from-violet-300 via-white to-indigo-300 bg-clip-text text-sm font-bold leading-tight text-transparent">SkillTrace AI</p>
-          <p className="text-[11px] font-medium text-slate-400">{label}</p>
+          <p className="bg-gradient-to-r from-violet-400 via-fuchsia-400 to-indigo-400 bg-clip-text text-sm font-bold leading-tight text-transparent">SkillTrace AI</p>
+          <p className="text-[11px] font-medium t-muted">{label}</p>
         </div>
       </Link>
 
-      <div className="mb-4 mt-2 px-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+      <div className="mb-4 mt-2 px-2 text-[11px] font-semibold uppercase tracking-wider t-muted">
         Menu
       </div>
 
@@ -105,8 +105,8 @@ export default function Sidebar() {
               href={href}
               className={`group relative flex items-center gap-3 overflow-hidden rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200 ${
                 active
-                  ? "bg-gradient-to-r from-violet-600/30 to-brand-500/20 text-white shadow-inner"
-                  : "text-slate-400 hover:bg-white/[0.08] hover:text-slate-100"
+                  ? "bg-gradient-to-r from-violet-600/30 to-brand-500/20 text-[var(--fg-strong)] shadow-inner"
+                  : "t-muted hover:bg-[var(--chip-8)] hover:text-[var(--fg-strong)]"
               }`}
             >
               {active && (
@@ -114,7 +114,7 @@ export default function Sidebar() {
               )}
               <Icon
                 className={`h-[18px] w-[18px] shrink-0 transition-transform duration-200 ${
-                  active ? "text-violet-300" : "text-slate-400 group-hover:text-violet-400 group-hover:scale-110"
+                  active ? "text-violet-500" : "t-muted group-hover:text-violet-500 group-hover:scale-110"
                 }`}
               />
               <span className="truncate">{itemLabel}</span>
@@ -123,7 +123,7 @@ export default function Sidebar() {
         })}
       </nav>
 
-      <div className="mt-6 ml-1 text-[11px] text-slate-600">&copy; {new Date().getFullYear()} SkillTrace</div>
+      <div className="mt-6 ml-1 text-[11px] t-dim">&copy; {new Date().getFullYear()} SkillTrace AI</div>
     </aside>
   );
 }

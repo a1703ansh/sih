@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import get_current_user
+from app.config import get_settings
 from app.services.auth_service import (
     register_user,
     authenticate_by_password,
@@ -84,10 +85,10 @@ async def send_otp(body: OTPRequest, db: AsyncSession = Depends(get_db)):
     otp = await create_otp(db, body.phone, purpose="login")
     # In production: send via Twilio SMS
     # await send_sms(body.phone, f"Your SkillTrace AI login OTP is: {otp}")
-    return {
-        "message": "OTP sent successfully",
-        "otp_dev": otp,  # REMOVE in production — only for dev/testing
-    }
+    payload: dict[str, str] = {"message": "OTP sent successfully"}
+    if get_settings().DEBUG:
+        payload["otp_dev"] = otp
+    return payload
 
 
 @router.post("/otp/verify", response_model=TokenResponse)

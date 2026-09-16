@@ -8,7 +8,7 @@ functions do NOT talk to the database so they stay trivially testable.
 """
 import csv
 import io
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any
 
 _REPORTABLE_TYPES = {
@@ -187,7 +187,7 @@ def to_pdf(title: str, columns: list[tuple[str, str]], rows: list[dict]) -> byte
     story = [
         Paragraph(title, title_style),
         Paragraph(
-            f"Generated {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC · "
+            f"Generated {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')} UTC · "
             f"{len(rows)} record(s)",
             meta_style,
         ),

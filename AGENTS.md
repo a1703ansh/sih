@@ -26,7 +26,7 @@ Vocational education outcome tracking & labor analytics platform.
 - `eslint` is pinned to `^8.57.0` (eslint-config-next@14.2.x requires eslint ^8).
 - `optionalDependencies` includes `"@next/swc-win32-x64-msvc": "npm:null@*"` as a
   deliberate workaround — leave it.
-- Test runner config in `backend/pyproject.toml` pulls `--cov`, so tests require
+- Test runner config in `pyproject.toml` (repo root) pulls `--cov`, so tests require
   `pytest-cov`.
 - E712 SQLAlchemy styles (`== True`) and T201 `print` statements are intentionally kept.
 

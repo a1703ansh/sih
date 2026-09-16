@@ -15,8 +15,35 @@ import Toast from "@/components/ui/Toast";
 import { formatISODate, formatISODateTime, formatINR } from "@/lib/utils";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
+  PieChart, Pie, Legend, AreaChart, Area,
 } from "recharts";
 import { useRequireAuth } from "@/lib/hooks/useAuthGuard";
+
+const APPLICANT_STATUS_LABELS: Record<string, string> = {
+  applied: "Applied",
+  shortlisted: "Shortlisted",
+  interview: "Interview",
+  offered: "Offered",
+  hired: "Hired",
+  rejected: "Rejected",
+};
+
+const APPLICANT_STATUS_COLORS: Record<string, string> = {
+  applied: "#6366f1",
+  shortlisted: "#8b5cf6",
+  interview: "#0ea5e9",
+  offered: "#10b981",
+  hired: "#16a34a",
+  rejected: "#f43f5e",
+};
+
+const CHART_TOOLTIP = {
+  borderRadius: 12,
+  border: "1px solid #e2e8f0",
+  background: "rgba(255,255,255,0.95)",
+  fontSize: 12,
+  boxShadow: "0 12px 40px rgba(15,23,42,0.12)",
+};
 import {
   useJobPostings, useDashboardStats, usePolicyAlerts, useJobApplicants,
   useCandidates, useEmployerShortlist, unshortlistCandidate, updateShortlistNote,
@@ -24,6 +51,9 @@ import {
   notifyShortlistedCandidates, useEmployerApplicationsOverview,
 } from "@/lib/hooks/useDashboard";
 import type { JobPostingListItem, JobApplicant, CandidateListItem, ShortlistCandidate, NotificationItem, SectorBenchmark, FunnelStage } from "@/lib/types";
+import ScrollProgress from "@/components/motion/ScrollProgress";
+import { StaggerGroup, StaggerItem } from "@/components/motion/Stagger";
+import AuroraBackground from "@/components/motion/AuroraBackground";
 
 /* ── Animated counter ────────────────────────────────────────────────────── */
 
@@ -56,6 +86,22 @@ function CountUp({ end, suffix = "", duration = 1200, decimals = 0 }: {
       {decimals > 0 ? display.toFixed(decimals) : Math.round(display).toLocaleString()}
       {suffix}
     </span>
+  );
+}
+
+function MiniStat({ icon: Icon, label, value, tone }: { icon: typeof CheckCircle2; label: string; value: number; tone: string }) {
+  return (
+    <div className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
+      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${tone} text-white shadow-md`}>
+        <Icon className="h-4 w-4" />
+      </span>
+      <div className="min-w-0">
+        <p className="text-lg font-bold leading-tight text-slate-800">
+          <CountUp end={value} duration={800} />
+        </p>
+        <p className="truncate text-xs text-slate-400">{label}</p>
+      </div>
+    </div>
   );
 }
 
@@ -654,6 +700,40 @@ export default function EmployerDashboard() {
     [funnelCounts],
   );
 
+  /* Hiring efficiency: stage-to-stage conversion + time-to-hire */
+  const efficiency = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const s of funnelCounts) map[s.key] = s.count;
+    const total = funnelTotal;
+    const conv = (from: string, to: string) =>
+      total && map[from] ? Math.round((map[to] / map[from]) * 100) : 0;
+    let timeDays: number | null = null;
+    if (overview && overview.applications.length > 0) {
+      const hired = overview.applications.filter(
+        (a) => a.status === "hired" && a.offer_start_date,
+      );
+      if (hired.length > 0) {
+        const sum = hired.reduce(
+          (s, a) =>
+            s +
+            (new Date(a.offer_start_date as string).getTime() - new Date(a.applied_at).getTime()) /
+              86400000,
+          0,
+        );
+        timeDays = Math.round((sum / hired.length) * 10) / 10;
+      }
+    }
+    return {
+      shortlistRate: conv("applied", "shortlisted"),
+      interviewRate: conv("shortlisted", "interview"),
+      offerRate: conv("interview", "offered"),
+      offerAcceptRate: conv("offered", "hired"),
+      overallHireRate: conv("applied", "hired"),
+      timeDays,
+      hiredCount: map["hired"] ?? 0,
+    };
+  }, [funnelCounts, funnelTotal, overview]);
+
   /* Salary benchmark across all postings */
   const salaryStats = useMemo(() => {
     const lows: number[] = [];
@@ -700,6 +780,47 @@ export default function EmployerDashboard() {
       },
     ];
   }, [salaryStats]);
+
+  /* Applicant-funnel chart data */
+  const statusMixRows = useMemo(() => {
+    if (!overview) return [];
+    return Object.entries(overview.status_counts).map(([key, count]) => ({
+      key,
+      label: APPLICANT_STATUS_LABELS[key] ?? key,
+      count,
+      color: APPLICANT_STATUS_COLORS[key] ?? "#94a3b8",
+    }));
+  }, [overview]);
+
+  const inflowByMonth = useMemo(() => {
+    if (!overview || overview.applications.length === 0) return [];
+    const map: Record<string, number> = {};
+    for (const a of overview.applications) {
+      const d = new Date(a.applied_at);
+      if (isNaN(d.getTime())) continue;
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      map[key] = (map[key] || 0) + 1;
+    }
+    const keys = Object.keys(map).sort();
+    return keys.slice(-6).map((key) => {
+      const [y, m] = key.split("-").map(Number);
+      return {
+        month: new Date(y, m - 1).toLocaleDateString("en-IN", { month: "short" }),
+        count: map[key],
+      };
+    });
+  }, [overview]);
+
+  /* Stage counts for the Applicant Insights strip */
+  const overviewCounts = useMemo(() => {
+    const sc = overview?.status_counts ?? {};
+    return {
+      applied: sc.applied ?? 0,
+      interview: sc.interview ?? 0,
+      offered: sc.offered ?? 0,
+      hired: sc.hired ?? 0,
+    };
+  }, [overview]);
 
   /* Required-skills cloud across all postings */
   const skillsCloud = useMemo(() => {
@@ -787,11 +908,13 @@ export default function EmployerDashboard() {
 
   return (
     <main className="min-h-screen p-6">
+      <ScrollProgress />
       <div className="mx-auto max-w-6xl">
 
         {/* ── Welcome Banner ─────────────────────────────────────────── */}
-        <div className="glass animate-fade-up overflow-hidden p-6 mb-8">
-          <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="glass animate-fade-up relative overflow-hidden p-6 mb-8">
+          <AuroraBackground subtle />
+          <div className="relative flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-4">
               <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-600 to-indigo-500 shadow-lg shadow-indigo-500/30">
                 <Briefcase className="h-6 w-6 text-white" />
@@ -812,7 +935,10 @@ export default function EmployerDashboard() {
                 </span>
               )}
               <span className="chip bg-emerald-100 text-emerald-700">
-                <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                <span className="relative mr-1 inline-flex h-2 w-2 items-center justify-center">
+                  <span className="animate-pulse-ring absolute inline-flex h-full w-full rounded-full bg-emerald-500" />
+                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                </span>
                 Live data
               </span>
             </div>
@@ -825,13 +951,9 @@ export default function EmployerDashboard() {
             {Array.from({ length: 3 }).map((_, i) => <SkeletonCard key={i} />)}
           </div>
         ) : (
-          <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-3">
-            {kpiConfig.map(({ label, value, icon: Icon, tint, text }, i) => (
-              <div
-                key={label}
-                className="glass card-hover p-6 transition-transform duration-300 hover:-translate-y-1 animate-fade-up"
-                style={{ animationDelay: `${i * 0.06}s` }}
-              >
+<StaggerGroup className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-3">
+            {kpiConfig.map(({ label, value, icon: Icon, tint, text }) => (
+              <StaggerItem key={label} className="glass card-hover p-6 transition-transform duration-300 hover:-translate-y-1">
                 <div className={`mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br ${tint} shadow-md`}>
                   <Icon className="h-5 w-5 text-white" />
                 </div>
@@ -839,9 +961,9 @@ export default function EmployerDashboard() {
                   <CountUp end={value} />
                 </p>
                 <p className={`text-sm ${text} font-medium`}>{label}</p>
-              </div>
+              </StaggerItem>
             ))}
-          </div>
+          </StaggerGroup>
         )}
 
         {/* ── New Activity (Notifications) Panel ────────────────────── */}
@@ -1112,6 +1234,180 @@ export default function EmployerDashboard() {
               </div>
             </div>
           )}
+        </div>
+
+{/* ── NEW: Hiring Efficiency ───────────────────────────────── */}
+        <div className="glass p-6 mb-8 animate-fade-up delay-150">
+          <div className="mb-4 flex items-center justify-between">
+            <h3 className="panel-title">
+              Hiring Efficiency
+            </h3>
+            {efficiency.hiredCount > 0 && (
+              <span className="chip bg-emerald-100 text-emerald-700">
+                {efficiency.hiredCount} hired · avg {efficiency.timeDays ?? "—"} days to hire
+              </span>
+            )}
+          </div>
+
+          {funnelLoading || (overviewLoading && !overview) ? (
+            <SkeletonChart />
+          ) : funnelTotal === 0 ? (
+            <div className="flex h-32 flex-col items-center justify-center text-slate-400">
+              <TrendingUp className="mb-2 h-10 w-10 opacity-30" />
+              <p className="text-sm font-medium">Conversion metrics appear once applicants arrive</p>
+            </div>
+          ) : (
+            <>
+              <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+                {[
+                  { label: "Shortlist rate", value: efficiency.shortlistRate, icon: UserCheck, tone: "text-indigo-600 bg-indigo-100", bar: "bg-indigo-500" },
+                  { label: "Interview rate", value: efficiency.interviewRate, icon: CalendarDays, tone: "text-violet-600 bg-violet-100", bar: "bg-violet-500" },
+                  { label: "Offer rate", value: efficiency.offerRate, icon: BadgeCheck, tone: "text-sky-600 bg-sky-100", bar: "bg-sky-500" },
+                  { label: "Offer acceptance", value: efficiency.offerAcceptRate, icon: CheckCircle2, tone: "text-emerald-600 bg-emerald-100", bar: "bg-emerald-500" },
+                  { label: "Overall hire rate", value: efficiency.overallHireRate, icon: Briefcase, tone: "text-brand-600 bg-brand-100", bar: "bg-brand-500" },
+                ].map(({ label, value, icon: Icon, tone, bar }) => (
+                  <div key={label} className="rounded-2xl border border-slate-100 bg-white p-4">
+                    <div className={`mb-3 inline-flex h-9 w-9 items-center justify-center rounded-xl ${tone}`}>
+                      <Icon className="h-4 w-4" />
+                    </div>
+                    <p className="text-2xl font-bold text-slate-800">{value}<span className="text-sm font-semibold text-slate-400">%</span></p>
+                    <p className="mt-1 flex items-center gap-1.5 text-xs font-medium text-slate-500">
+                      <span className={`inline-block h-2 w-2 rounded-full ${bar}`} />
+                      {label}
+                    </p>
+                  </div>
+                ))}
+              </div>
+              <div className="flex flex-col items-start gap-2 rounded-2xl border border-slate-100 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-3">
+                  <span className={`inline-flex h-9 w-9 items-center justify-center rounded-xl ${efficiency.timeDays != null ? "text-emerald-600 bg-emerald-100" : "text-slate-400 bg-slate-100"}`}>
+                    <Clock className="h-4 w-4" />
+                  </span>
+                  <div>
+                    <p className="text-sm font-semibold text-slate-800">
+                      {efficiency.timeDays != null ? `${efficiency.timeDays} days` : "Not enough hires yet"}
+                    </p>
+                    <p className="text-xs text-slate-400">Average time from application to accepted offer</p>
+                  </div>
+                </div>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100 sm:w-1/2">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-brand-500 to-emerald-500 transition-all duration-700"
+                    style={{ width: `${Math.min(efficiency.overallHireRate, 100)}%` }}
+                  />
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* ── Applicant Insights ─────────────────────────────────────── */}
+        <div className="mb-8 animate-fade-up delay-150">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <h2 className="panel-title">
+              <Layers className="h-4 w-4 text-violet-600" />
+              Applicant Insights
+            </h2>
+            <span className="text-sm text-slate-400">
+              {overview ? `${overview.total} total applications` : "…"}
+            </span>
+          </div>
+
+          <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4 animate-fade-in">
+            <MiniStat icon={Users} label="Total Applied" value={overviewCounts.applied} tone="from-indigo-500 to-violet-500" />
+            <MiniStat icon={CalendarDays} label="Interview Stage" value={overviewCounts.interview} tone="from-sky-500 to-cyan-500" />
+            <MiniStat icon={CheckCircle2} label="Offers Made" value={overviewCounts.offered} tone="from-emerald-500 to-teal-500" />
+            <MiniStat icon={UserCheck} label="Hired" value={overviewCounts.hired} tone="from-amber-500 to-orange-500" />
+          </div>
+
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          {/* Status mix donut */}
+          <div className="glass p-6 animate-fade-up delay-150">
+            <h3 className="panel-title">
+              <Layers className="h-4 w-4 text-violet-600" />
+              Applicant Status Mix
+            </h3>
+            <p className="mt-1 text-sm text-slate-500">
+              Distribution of all applications across your hiring stages.
+            </p>
+            <div className="mt-4 h-64 animate-fade-in">
+              {overviewLoading && !overview ? (
+                <div className="h-full animate-pulse rounded-xl bg-slate-100" />
+              ) : statusMixRows.length === 0 ? (
+                <div className="flex h-full flex-col items-center justify-center text-slate-400">
+                  <Layers className="mb-2 h-8 w-8 opacity-30" />
+                  <p className="text-sm font-medium">No applications yet</p>
+                  <p className="mt-1 text-xs text-slate-300">Mix chart appears once candidates apply</p>
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={statusMixRows}
+                      dataKey="count"
+                      nameKey="label"
+                      innerRadius={58}
+                      outerRadius={88}
+                      paddingAngle={3}
+                      strokeWidth={2}
+                    >
+                      {statusMixRows.map((r) => (
+                        <Cell key={r.key} fill={r.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip contentStyle={CHART_TOOLTIP} formatter={(value, name) => [`${value}`, name]} />
+                    <Legend verticalAlign="bottom" height={44} iconType="circle" iconSize={9} />
+                  </PieChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </div>
+
+          {/* Application inflow area */}
+          <div className="glass p-6 animate-fade-up delay-200">
+            <h3 className="panel-title">
+              <BarChart3 className="h-4 w-4 text-sky-600" />
+              Application Inflow
+            </h3>
+            <p className="mt-1 text-sm text-slate-500">
+              Monthly applications received across all your job postings.
+            </p>
+            <div className="mt-4 h-64 animate-fade-in">
+              {overviewLoading && !overview ? (
+                <div className="h-full animate-pulse rounded-xl bg-slate-100" />
+              ) : inflowByMonth.length === 0 ? (
+                <div className="flex h-full flex-col items-center justify-center text-slate-400">
+                  <BarChart3 className="mb-2 h-8 w-8 opacity-30" />
+                  <p className="text-sm font-medium">No inflow data yet</p>
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={inflowByMonth} margin={{ top: 5, right: 10, bottom: 0, left: -15 }}>
+                    <defs>
+                      <linearGradient id="inflowGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.35} />
+                        <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.18)" vertical={false} />
+                    <XAxis dataKey="month" tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} allowDecimals={false} />
+                    <Tooltip contentStyle={CHART_TOOLTIP} formatter={(value) => [`${value}`, "applications"]} />
+                    <Area
+                      type="monotone"
+                      dataKey="count"
+                      stroke="#0ea5e9"
+                      strokeWidth={2.5}
+                      fill="url(#inflowGrad)"
+                      dot={{ r: 3, fill: "#0ea5e9", strokeWidth: 0 }}
+                      activeDot={{ r: 5, strokeWidth: 2, stroke: "#fff" }}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </div>
+          </div>
         </div>
 
         {/* ── NEW: Recent Applicants + Upcoming Interviews ───────────── */}

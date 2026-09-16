@@ -18,6 +18,9 @@ import type { CandidateListItem, CourseListItem, JobApplication, TopSkill } from
 import Modal from "@/components/ui/Modal";
 import Field from "@/components/ui/Field";
 import Toast from "@/components/ui/Toast";
+import ScrollProgress from "@/components/motion/ScrollProgress";
+import { StaggerGroup, StaggerItem } from "@/components/motion/Stagger";
+import AuroraBackground from "@/components/motion/AuroraBackground";
 import {
   Target,
   ShieldCheck,
@@ -50,9 +53,38 @@ import {
   GraduationCap,
   CalendarDays,
 } from "lucide-react";
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart as RBar,
+  CartesianGrid,
+  Cell,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { formatISODateTime } from "@/lib/utils";
 
 const ONBOARDING_SESSION_KEY = "onboarding-dismissed";
+
+const STATUS_META: Record<string, { label: string; color: string }> = {
+  applied: { label: "Applied", color: "#6366f1" },
+  shortlisted: { label: "Shortlisted", color: "#8b5cf6" },
+  interview: { label: "Interview", color: "#0ea5e9" },
+  offered: { label: "Offered", color: "#10b981" },
+  hired: { label: "Hired", color: "#16a34a" },
+  rejected: { label: "Rejected", color: "#f43f5e" },
+};
+
+const CHART_TOOLTIP = {
+  borderRadius: 12,
+  border: "1px solid #e2e8f0",
+  background: "rgba(255,255,255,0.95)",
+  fontSize: 12,
+  boxShadow: "0 12px 40px rgba(15,23,42,0.12)",
+};
 
 const ONBOARDING_SKILLS = [
   "Python", "Django", "React", "SQL", "AWS", "JavaScript", "Node.js",
@@ -84,6 +116,20 @@ function useCountUp(target: number, duration = 800, active = true) {
 
 function Skeleton({ className = "" }: { className?: string }) {
   return <div className={`skeleton ${className}`} />;
+}
+
+function StatTile({ icon: Icon, label, value, tone }: { icon: typeof CheckCircle2; label: string; value: number; tone: string }) {
+  return (
+    <div className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
+      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${tone} text-white shadow-md`}>
+        <Icon className="h-4 w-4" />
+      </span>
+      <div className="min-w-0">
+        <p className="text-lg font-bold leading-tight text-slate-800">{value}</p>
+        <p className="truncate text-xs text-slate-400">{label}</p>
+      </div>
+    </div>
+  );
 }
 
 const STATUS_CONFIG: Record<string, { bg: string; text: string; icon: typeof CheckCircle2 }> = {
@@ -581,6 +627,21 @@ export default function CandidateDashboard() {
   const offeredPending = applications.filter((a) => a.status === "offered").length;
   const hiredCount = applications.filter((a) => a.status === "hired").length;
 
+  const statusCounts = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const a of applications) m[a.status] = (m[a.status] || 0) + 1;
+    return Object.entries(m).sort((a, b) => b[1] - a[1]);
+  }, [applications]);
+  const statusTotal = statusCounts.reduce((s, [, c]) => s + c, 0);
+
+  const recentNotifications = useMemo(
+    () =>
+      [...notifications]
+        .sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime())
+        .slice(0, 3),
+    [notifications],
+  );
+
   const greeting = () => {
     const h = new Date().getHours();
     if (h < 12) return "Good morning";
@@ -661,12 +722,48 @@ export default function CandidateDashboard() {
     return scored;
   }, [courses, gapSkillNames, gapSkills]);
 
+  /* ── Career analytics chart data ─────────────────────────────────────── */
+  const pipelineChartRows = useMemo(
+    () =>
+      statusCounts.map(([status, count]) => ({
+        status,
+        label: STATUS_META[status]?.label ?? status,
+        count,
+        color: STATUS_META[status]?.color ?? "#94a3b8",
+      })),
+    [statusCounts],
+  );
+
+  const salaryHistory = useMemo(
+    () =>
+      outcomeTimeline
+        .filter((t) => t.is_employed && t.monthly_salary != null)
+        .map((t) => ({ interval: t.interval, salary: t.monthly_salary as number })),
+    [outcomeTimeline],
+  );
+
+  const skillDemandRows = useMemo(() => {
+    if (!topSkills?.skills) return [];
+    const mine = new Set((candidate?.skill_tags ?? []).map((s) => s.toLowerCase()));
+    return topSkills.skills.slice(0, 7).map((s) => ({
+      skill: s.skill,
+      demand: s.demand,
+      mine: mine.has(s.skill.toLowerCase()),
+    }));
+  }, [topSkills, candidate]);
+
   const gapCoursesLoading = profileLoading || topSkillsLoading || coursesLoading;
 
   const allLoading = profileLoading && scoreLoading && appsLoading && notifLoading;
 
+  const displayAppCount = useCountUp(appCount, 700, !appsLoading);
+  const displayMatchCount = useCountUp(jobMatches?.matches?.length ?? 0, 700, !matchesLoading);
+  const displayGapCount = useCountUp(gapSkills.length, 700, !topSkillsLoading);
+  const displayCourseCount = useCountUp(rankedGapCourses.length, 700, !gapCoursesLoading);
+
   return (
     <main className="min-h-screen p-6">
+      <ScrollProgress />
       <div className="mx-auto max-w-5xl">
 
         {showOnboarding && candidate && (
@@ -684,8 +781,9 @@ export default function CandidateDashboard() {
         )}
 
         {/* ── Welcome Banner ── */}
-        <div className="glass p-6 mb-6 animate-fade-up">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="glass p-6 mb-6 animate-fade-up relative overflow-hidden">
+          <AuroraBackground subtle />
+          <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
               {profileLoading ? (
                 <Skeleton className="mb-2 h-8 w-64 rounded-lg" />
@@ -734,34 +832,28 @@ export default function CandidateDashboard() {
         </div>
 
         {/* ── Stat Cards ── */}
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 mb-6">
+        <StaggerGroup className="grid grid-cols-1 gap-4 sm:grid-cols-3 mb-6">
           {[
             {
               label: "Applications",
               value: appsLoading ? null : displayApps,
               icon: FileText,
               gradient: "from-indigo-500 to-violet-500",
-              delay: "delay-100",
             },
             {
               label: "Unread Notifications",
               value: notifLoading ? null : displayNotifs,
               icon: Bell,
               gradient: "from-rose-500 to-pink-500",
-              delay: "delay-200",
             },
             {
               label: "Skills Listed",
               value: profileLoading ? null : displaySkills,
               icon: Sparkles,
               gradient: "from-amber-500 to-orange-500",
-              delay: "delay-300",
             },
-          ].map(({ label, value, icon: Icon, gradient, delay }) => (
-            <div
-              key={label}
-              className={`glass glass-inner animate-fade-up ${delay} flex items-center gap-4 p-5`}
-            >
+          ].map(({ label, value, icon: Icon, gradient }) => (
+            <StaggerItem key={label} className="glass glass-inner flex items-center gap-4 p-5">
               <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${gradient} shadow-md`}>
                 <Icon className="h-5 w-5 text-white" />
               </div>
@@ -773,9 +865,9 @@ export default function CandidateDashboard() {
                   <p className="text-2xl font-extrabold text-slate-800">{value}</p>
                 )}
               </div>
-            </div>
+            </StaggerItem>
           ))}
-        </div>
+        </StaggerGroup>
 
         {/* ── Hiring Spotlight ── */}
         {!appsLoading && applications.length > 0 && (
@@ -921,6 +1013,244 @@ export default function CandidateDashboard() {
           )}
         </div>
 
+        {/* ── Career Analytics ── */}
+        <div className="glass p-6 mb-6 animate-fade-up delay-150">
+          <div className="mb-4">
+            <div className="panel-title">
+              <TrendingUp className="h-5 w-5 text-brand-600" />
+              Career Analytics
+            </div>
+            <p className="mt-1 text-sm text-slate-500">
+              Your application pipeline, income trajectory and in-demand skill fit — at a glance.
+            </p>
+          </div>
+
+          <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <StatTile icon={Layers} label="Applications" value={displayAppCount} tone="from-indigo-500 to-violet-500" />
+            <StatTile icon={Sparkles} label="Job Matches" value={displayMatchCount} tone="from-emerald-500 to-teal-500" />
+            <StatTile icon={AlertTriangle} label="Skill Gaps" value={displayGapCount} tone="from-amber-500 to-orange-500" />
+            <StatTile icon={GraduationCap} label="Courses Ready" value={displayCourseCount} tone="from-sky-500 to-cyan-500" />
+          </div>
+
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+            {/* Application pipeline */}
+            <div className="rounded-2xl border border-slate-100 bg-white p-4">
+              <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Application pipeline
+              </p>
+              {appsLoading ? (
+                <div className="h-44 animate-pulse rounded-xl bg-slate-100" />
+              ) : pipelineChartRows.length === 0 ? (
+                <div className="flex h-44 flex-col items-center justify-center text-slate-400">
+                  <Layers className="mb-2 h-8 w-8 opacity-30" />
+                  <p className="text-sm font-medium">Apply to jobs to start your pipeline</p>
+                </div>
+              ) : (
+                <div className="h-44 animate-fade-in">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <RBar data={pipelineChartRows} layout="vertical" barCategoryGap="28%">
+                      <CartesianGrid stroke="#f1f5f9" horizontal={false} />
+                      <XAxis
+                        type="number"
+                        stroke="#cbd5e1"
+                        tick={{ fontSize: 11, fill: "#64748b" }}
+                        tickLine={false}
+                        axisLine={false}
+                        allowDecimals={false}
+                      />
+                      <YAxis
+                        type="category"
+                        dataKey="label"
+                        width={84}
+                        stroke="#cbd5e1"
+                        tick={{ fontSize: 11, fill: "#475569" }}
+                        tickLine={false}
+                        axisLine={false}
+                      />
+                      <Tooltip
+                        cursor={{ fill: "rgba(99,102,241,0.06)" }}
+                        contentStyle={CHART_TOOLTIP}
+                        labelStyle={{ color: "#334155", fontWeight: 600 }}
+                        formatter={(value) => [`${value}`, "applications"]}
+                      />
+                      <Bar dataKey="count" barSize={14} radius={[0, 6, 6, 0]}>
+                        {pipelineChartRows.map((r) => (
+                          <Cell key={r.status} fill={r.color} />
+                        ))}
+                      </Bar>
+                    </RBar>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </div>
+
+            {/* Salary trajectory */}
+            <div className="rounded-2xl border border-slate-100 bg-white p-4">
+              <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Salary trajectory
+              </p>
+              {outcomeLoading ? (
+                <div className="h-44 animate-pulse rounded-xl bg-slate-100" />
+              ) : salaryHistory.length === 0 ? (
+                <div className="flex h-44 flex-col items-center justify-center text-slate-400">
+                  <CircleDot className="mb-2 h-8 w-8 opacity-30" />
+                  <p className="text-sm font-medium">No salary history yet</p>
+                  <p className="mt-1 text-xs text-slate-300">Appears once outcomes are recorded</p>
+                </div>
+              ) : (
+                <div className="h-44 animate-fade-in">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={salaryHistory} margin={{ top: 5, right: 5, bottom: 0, left: 0 }}>
+                      <defs>
+                        <linearGradient id="salGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.35} />
+                          <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid stroke="#f1f5f9" vertical={false} />
+                      <XAxis
+                        dataKey="interval"
+                        stroke="#cbd5e1"
+                        tick={{ fontSize: 11, fill: "#64748b" }}
+                        tickLine={false}
+                        axisLine={false}
+                      />
+                      <YAxis
+                        stroke="#cbd5e1"
+                        tick={{ fontSize: 11, fill: "#64748b" }}
+                        tickLine={false}
+                        axisLine={false}
+                        tickFormatter={(v) => `₹${Math.round(Number(v) / 1000)}k`}
+                      />
+                      <Tooltip
+                        contentStyle={CHART_TOOLTIP}
+                        labelStyle={{ color: "#334155", fontWeight: 600 }}
+                        formatter={(value) => [`₹${Number(value).toLocaleString()}`, "salary"]}
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="salary"
+                        stroke="#8b5cf6"
+                        strokeWidth={2.5}
+                        fill="url(#salGrad)"
+                        dot={{ r: 3, fill: "#8b5cf6", strokeWidth: 0 }}
+                        activeDot={{ r: 5, strokeWidth: 2, stroke: "#fff" }}
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </div>
+
+            {/* Skill demand vs profile */}
+            <div className="rounded-2xl border border-slate-100 bg-white p-4">
+              <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Skill demand vs your profile
+              </p>
+              {profileLoading || topSkillsLoading ? (
+                <div className="h-44 animate-pulse rounded-xl bg-slate-100" />
+              ) : skillDemandRows.length === 0 ? (
+                <div className="flex h-44 flex-col items-center justify-center text-slate-400">
+                  <Target className="mb-2 h-8 w-8 opacity-30" />
+                  <p className="text-sm font-medium">No skill-demand data yet</p>
+                </div>
+              ) : (
+                <>
+                  <div className="h-44 animate-fade-in">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <RBar data={skillDemandRows} layout="vertical" barCategoryGap="26%">
+                        <CartesianGrid stroke="#f1f5f9" horizontal={false} />
+                        <XAxis
+                          type="number"
+                          stroke="#cbd5e1"
+                          tick={{ fontSize: 11, fill: "#64748b" }}
+                          tickLine={false}
+                          axisLine={false}
+                        />
+                        <YAxis
+                          type="category"
+                          dataKey="skill"
+                          width={104}
+                          stroke="#cbd5e1"
+                          tick={{ fontSize: 11, fill: "#475569" }}
+                          tickLine={false}
+                          axisLine={false}
+                        />
+                        <Tooltip
+                          cursor={{ fill: "rgba(99,102,241,0.06)" }}
+                          contentStyle={CHART_TOOLTIP}
+                          labelStyle={{ color: "#334155", fontWeight: 600 }}
+                          formatter={(value) => [`${value}`, "demand score"]}
+                        />
+                        <Bar dataKey="demand" barSize={12} radius={[0, 6, 6, 0]}>
+                          {skillDemandRows.map((r) => (
+                            <Cell key={r.skill} fill={r.mine ? "#8b5cf6" : "#e2e8f0"} />
+                          ))}
+                        </Bar>
+                      </RBar>
+                    </ResponsiveContainer>
+                  </div>
+                  <div className="mt-3 flex items-center gap-4 text-xs text-slate-500">
+                    <span className="flex items-center gap-1.5">
+                      <span className="h-3 w-3 rounded-sm bg-violet-500" />
+                      You have this skill
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="h-3 w-3 rounded-sm bg-slate-200" />
+                      Gap to close
+                    </span>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Upskill recommendations */}
+            <div className="rounded-2xl border border-slate-100 bg-white p-4">
+              <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Recommended upskilling
+              </p>
+              {gapCoursesLoading ? (
+                <div className="h-44 space-y-2">
+                  {[0, 1, 2].map((i) => (
+                    <div key={i} className="h-14 animate-pulse rounded-xl bg-slate-100" />
+                  ))}
+                </div>
+              ) : rankedGapCourses.length === 0 ? (
+                <div className="flex h-44 flex-col items-center justify-center text-slate-400">
+                  <GraduationCap className="mb-2 h-8 w-8 opacity-30" />
+                  <p className="text-sm font-medium">No upskilling needed</p>
+                  <p className="mt-1 text-xs text-slate-300">Your skills already match in-demand roles</p>
+                </div>
+              ) : (
+                <div className="space-y-2 animate-fade-in">
+                  {rankedGapCourses.map(({ course, covered, matchCount }) => (
+                    <Link
+                      key={course.id}
+                      href="/candidate/skills"
+                      className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50 p-3 transition hover:border-brand-200 hover:bg-white"
+                    >
+                      <div className="flex min-w-0 items-center gap-2.5">
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-brand-500 to-indigo-500 text-white">
+                          <GraduationCap className="h-4 w-4" />
+                        </span>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-slate-800">{course.name}</p>
+                          <p className="text-xs text-slate-400">
+                            Covers {covered.map((c) => c.toLowerCase()).join(", ") || "—"}
+                          </p>
+                        </div>
+                      </div>
+                      <span className="chip shrink-0 bg-indigo-100 text-indigo-700">
+                        {matchCount} skill{matchCount > 1 ? "s" : ""}
+                      </span>
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
         {/* ── Nav Cards ── */}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 mb-6">
           {navCards.map(({ href, title, desc, icon: Icon, tint, tag, tagTone, badge }, i) => (
@@ -1021,6 +1351,114 @@ export default function CandidateDashboard() {
               ))}
             </div>
           )}
+        </div>
+
+        {/* ── Application Journey & Notifications ── */}
+        <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2 animate-fade-up delay-150">
+          <div className="glass p-6">
+            <div className="mb-4 flex items-center justify-between">
+              <div className="panel-title">
+                <Layers className="h-5 w-5 text-indigo-600" />
+                Application Journey
+              </div>
+              <Link href="/candidate/applications" className="text-sm font-medium text-brand-600 hover:text-brand-700 transition-colors">
+                View applications
+              </Link>
+            </div>
+
+            {appsLoading ? (
+              <div className="space-y-3">
+                {[1, 2, 3].map((i) => <Skeleton key={i} className="h-10 rounded-xl" />)}
+              </div>
+            ) : statusTotal === 0 ? (
+              <div className="py-6 text-center">
+                <Layers className="mx-auto mb-2 h-8 w-8 text-slate-300" />
+                <p className="text-sm font-medium text-slate-500">No applications yet</p>
+                <p className="text-xs text-slate-400">Your application funnel will appear here</p>
+              </div>
+            ) : (
+              <>
+                <div className="mb-4 flex h-3 w-full overflow-hidden rounded-full bg-slate-100">
+                  {statusCounts.map(([status, count]) => {
+                    const cfg = STATUS_CONFIG[status] ?? { bg: "bg-slate-200", text: "text-slate-600", icon: FileText };
+                    return (
+                      <div
+                        key={status}
+                        className={cfg.bg}
+                        style={{ width: `${(count / statusTotal) * 100}%` }}
+                        title={`${status}: ${count}`}
+                      />
+                    );
+                  })}
+                </div>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {statusCounts.map(([status, count]) => {
+                    const cfg = STATUS_CONFIG[status] ?? { bg: "bg-slate-100", text: "text-slate-600", icon: FileText };
+                    const Icon = cfg.icon;
+                    const pct = Math.round((count / statusTotal) * 100);
+                    return (
+                      <div key={status} className="rounded-xl border border-slate-100 bg-white p-3">
+                        <div className={`mb-2 inline-flex h-8 w-8 items-center justify-center rounded-lg ${cfg.bg}`}>
+                          <Icon className={`h-4 w-4 ${cfg.text}`} />
+                        </div>
+                        <p className="text-lg font-bold text-slate-800">{count}</p>
+                        <p className="text-xs capitalize text-slate-500">{status} · {pct}%</p>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="mt-3 text-xs text-slate-400">
+                  Applications advance from <span className="font-medium text-slate-600">applied → shortlisted → interview → offered → hired</span>.
+                </p>
+              </>
+            )}
+          </div>
+
+          <div className="glass p-6">
+            <div className="mb-4 flex items-center justify-between">
+              <div className="panel-title">
+                <Bell className="h-5 w-5 text-rose-500" />
+                Latest Updates
+              </div>
+              <Link href="/candidate/notifications" className="text-sm font-medium text-brand-600 hover:text-brand-700 transition-colors">
+                View all ({notifCount})
+              </Link>
+            </div>
+
+            {notifLoading ? (
+              <div className="space-y-3">
+                {[1, 2, 3].map((i) => <Skeleton key={i} className="h-14 rounded-xl" />)}
+              </div>
+            ) : recentNotifications.length === 0 ? (
+              <div className="py-6 text-center">
+                <Bell className="mx-auto mb-2 h-8 w-8 text-slate-300" />
+                <p className="text-sm font-medium text-slate-500">No notifications yet</p>
+                <p className="text-xs text-slate-400">Application and placement updates arrive here</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {recentNotifications.map((n) => {
+                  const unread = !n.read_at;
+                  return (
+                    <div key={n.id} className={`flex items-start gap-3 rounded-xl border p-3 ${unread ? "border-brand-200 bg-brand-50/40" : "border-slate-100 bg-white"}`}>
+                      <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${unread ? "bg-brand-500" : "bg-slate-300"}`} />
+                      <div className="min-w-0 flex-1">
+                        <p className={`truncate text-sm font-semibold ${unread ? "text-slate-800" : "text-slate-600"}`}>
+                          {n.title || "Notification"}
+                        </p>
+                        <p className="truncate text-xs text-slate-400">{n.body || "—"}</p>
+                        {n.created_at && (
+                          <p className="mt-1 text-[11px] text-slate-400">
+                            {formatISODateTime(n.created_at)}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* ═══════════════════════════════════════════════

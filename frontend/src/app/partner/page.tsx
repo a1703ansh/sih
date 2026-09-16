@@ -27,6 +27,7 @@ import {
   CircleCheck,
   TriangleAlert,
   FileCheck2,
+  Activity,
 } from "lucide-react";
 import {
   PieChart,
@@ -52,6 +53,9 @@ import {
 } from "@/lib/hooks/useDashboard";
 import type { CourseListItem, OutcomeImportResult } from "@/lib/types";
 import { useRequireAuth } from "@/lib/hooks/useAuthGuard";
+import ScrollProgress from "@/components/motion/ScrollProgress";
+import { StaggerGroup, StaggerItem } from "@/components/motion/Stagger";
+import AuroraBackground from "@/components/motion/AuroraBackground";
 
 function useAnimatedNumber(target: number | null, duration = 1200) {
   const [display, setDisplay] = useState(0);
@@ -72,6 +76,20 @@ function useAnimatedNumber(target: number | null, duration = 1200) {
     requestAnimationFrame(tick);
   }, [target, duration]);
   return display;
+}
+
+function MiniStat({ icon: Icon, label, value, tone }: { icon: typeof CircleCheck; label: string; value: string; tone: string }) {
+  return (
+    <div className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
+      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${tone} text-white shadow-md`}>
+        <Icon className="h-4 w-4" />
+      </span>
+      <div className="min-w-0">
+        <p className="text-lg font-bold leading-tight text-slate-800">{value}</p>
+        <p className="truncate text-xs text-slate-400">{label}</p>
+      </div>
+    </div>
+  );
 }
 
 function SkeletonBlock({ className }: { className?: string }) {
@@ -419,6 +437,72 @@ export default function PartnerDashboard() {
     return new Set(topSkillsData.skills.map((s) => s.skill.trim().toLowerCase()));
   }, [topSkillsData]);
 
+  /* ── Derived: Enrollment momentum (monthly) ──────────────────────────── */
+  const monthlyEnrollments = useMemo(() => {
+    if (!enrollments || enrollments.length === 0) return [];
+    const map: Record<string, number> = {};
+    for (const e of enrollments) {
+      const d = new Date(e.enrollment_date);
+      if (isNaN(d.getTime())) continue;
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      map[key] = (map[key] ?? 0) + 1;
+    }
+    const keys = Object.keys(map).sort();
+    return keys.slice(-8).map((key) => {
+      const [y, m] = key.split("-").map(Number);
+      return {
+        month: new Date(y, m - 1).toLocaleDateString("en-IN", { month: "short" }),
+        enrollments: map[key],
+      };
+    });
+  }, [enrollments]);
+
+  /* ── Derived: Market fit (in-demand skills vs courses we offer) ─────── */
+  const marketFitRows = useMemo(() => {
+    if (!topSkillsData?.skills || topSkillsOffered.length === 0) return [];
+    const supplyBySkill = new Map(topSkillsOffered.map((o) => [o.skill, o.count]));
+    const maxDemand = Math.max(
+      1,
+      ...topSkillsData.skills.slice(0, 6).map((s) => s.demand),
+    );
+    const maxYours = Math.max(
+      1,
+      ...topSkillsData.skills.slice(0, 6).map(
+        (s) => supplyBySkill.get(s.skill.trim().toLowerCase()) ?? 0,
+      ),
+    );
+    return topSkillsData.skills.slice(0, 6).map((s) => {
+      const key = s.skill.trim().toLowerCase();
+      const yours = supplyBySkill.get(key) ?? 0;
+      return {
+        skill: s.skill.length > 14 ? s.skill.slice(0, 13) + "\u2026" : s.skill,
+        yours: maxYours > 1 ? Math.round((yours / maxYours) * 100) : yours,
+        demand: Math.round((s.demand / maxDemand) * 100),
+      };
+    });
+  }, [topSkillsData, topSkillsOffered]);
+
+  /* ── Derived: Enrollment pulse stats ─────────────────────────────────── */
+  const enrollmentPulse = useMemo(() => {
+    if (!enriched) return { completed: 0, active: 0, avgSalary: null as number | null };
+    const completed = enriched.filter((e) => e.is_completed).length;
+    const salaries = enriched
+      .map((e) => e.monthly_salary)
+      .filter((s): s is number => s !== null && s !== undefined);
+    return {
+      completed,
+      active: enriched.length - completed,
+      avgSalary: salaries.length
+        ? Math.round(salaries.reduce((a, b) => a + b, 0) / salaries.length)
+        : null,
+    };
+  }, [enriched]);
+
+  const displayEnrollments = useAnimatedNumber(enrollmentsLoading ? null : enrollments.length);
+  const displayCompleted = useAnimatedNumber(enrichedLoading ? null : enrollmentPulse.completed);
+  const displayActive = useAnimatedNumber(enrichedLoading ? null : enrollmentPulse.active);
+  const displaySalary = useAnimatedNumber(enrichedLoading ? null : enrollmentPulse.avgSalary);
+
   /* ── Derived: Recent students ────────────────────────────────────────── */
   const recentStudents = useMemo(() => {
     if (!enriched || enriched.length === 0) return [];
@@ -655,6 +739,55 @@ export default function PartnerDashboard() {
 
   const occupancyLoading = coursesLoading || enrichedLoading;
 
+  /* ── Derived: Course health index (completion + placement + occupancy) ── */
+  const courseHealth = useMemo(() => {
+    const rows = coursePerformance
+      .map((perf) => {
+        const placement = coursePlacementData.find((p) => p.courseId === perf.id);
+        const occ = courseOccupancy.find((o) => o.id === perf.id);
+        const factors: number[] = [];
+        if (perf.enrolled > 0) factors.push(perf.completionRate);
+        if (placement && placement.totalSurveyed > 0) factors.push(placement.placementRate);
+        if (occ && occ.occupancyPct !== null) factors.push(occ.occupancyPct);
+        const score =
+          factors.length > 0
+            ? Math.round(factors.reduce((s, f) => s + f, 0) / factors.length)
+            : null;
+        const rating =
+          score === null
+            ? "No data"
+            : score >= 75
+            ? "Excellent"
+            : score >= 55
+            ? "Good"
+            : score >= 35
+            ? "Needs attention"
+            : "At risk";
+        return {
+          id: perf.id,
+          name: perf.name,
+          score,
+          rating,
+          factors: factors.length,
+        };
+      })
+      .filter((r) => r.score !== null)
+      .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    const scored = rows.filter((r) => r.score !== null);
+    const overall =
+      scored.length > 0
+        ? Math.round(scored.reduce((s, r) => s + (r.score ?? 0), 0) / scored.length)
+        : null;
+    return {
+      rows,
+      overall,
+      best: scored[0] ?? null,
+      worst: scored[scored.length - 1] ?? null,
+    };
+  }, [coursePerformance, coursePlacementData, courseOccupancy]);
+
+  const healthLoading = coursesLoading || enrichedLoading;
+
   /* ── Derived: Program value / cost summary ───────────────────────────── */
   const costSummary = useMemo(() => {
     if (!courses || courses.length === 0) return null;
@@ -707,31 +840,29 @@ export default function PartnerDashboard() {
 
   return (
     <main className="min-h-screen p-6">
+      <ScrollProgress />
       <div className="mx-auto max-w-6xl">
 
         {/* ── Welcome Banner ─────────────────────────────── */}
         <div className="mb-8 overflow-hidden rounded-2xl bg-gradient-to-r from-indigo-600 via-brand-600 to-violet-600 p-[1px] animate-fade-up">
-          <div className="glass rounded-2xl px-8 py-10">
-            <div className="flex items-center gap-3 mb-1">
+          <div className="glass relative overflow-hidden rounded-2xl px-8 py-10">
+            <AuroraBackground subtle />
+            <div className="relative flex items-center gap-3 mb-1">
               <GraduationCap className="h-7 w-7 text-indigo-600" />
               <h1 className="text-3xl font-extrabold gradient-text">
                 Training Partner Dashboard
               </h1>
             </div>
-            <p className="text-slate-500 ml-10">
+            <p className="relative text-slate-500 ml-10">
               Monitor courses, track student outcomes, and align your curriculum with market demand.
             </p>
           </div>
         </div>
 
         {/* ── Dynamic Stat Cards ─────────────────────────── */}
-        <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-3">
-          {statCards.map(({ label, value, suffix, icon: Icon, tint, text, loading: isLoading }, i) => (
-            <div
-              key={label}
-              className="glass p-6 transition-transform duration-300 hover:-translate-y-1 animate-fade-up"
-              style={{ animationDelay: `${i * 0.06}s` }}
-            >
+        <StaggerGroup className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-3">
+          {statCards.map(({ label, value, suffix, icon: Icon, tint, text, loading: isLoading }) => (
+            <StaggerItem key={label} className="glass p-6 transition-transform duration-300 hover:-translate-y-1">
               <div className={`mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br ${tint} shadow-md`}>
                 <Icon className="h-5 w-5 text-white" />
               </div>
@@ -743,9 +874,9 @@ export default function PartnerDashboard() {
                 </p>
               )}
               <p className={`text-sm ${text} font-medium`}>{label}</p>
-            </div>
+            </StaggerItem>
           ))}
-        </div>
+        </StaggerGroup>
 
         {/* ── Courses Panel ──────────────────────────────── */}
         <div className="mb-8 animate-fade-up delay-100">
@@ -1069,6 +1200,115 @@ export default function PartnerDashboard() {
           )}
         </div>
 
+        {/* ── 3.5 Enrollment Momentum & Market Fit ─────────────── */}
+        <div className="mb-8 animate-fade-up delay-250">
+          <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4 animate-fade-in">
+            <MiniStat icon={Users} label="Total Enrollments" value={displayEnrollments.toLocaleString("en-IN")} tone="from-indigo-500 to-violet-500" />
+            <MiniStat icon={CircleCheck} label="Completed" value={displayCompleted.toLocaleString("en-IN")} tone="from-emerald-500 to-teal-500" />
+            <MiniStat icon={UserCheck} label="Active Learners" value={displayActive.toLocaleString("en-IN")} tone="from-sky-500 to-cyan-500" />
+            <MiniStat icon={IndianRupee} label="Avg. Salary (₹/mo)" value={displaySalary === 0 ? "—" : `₹${displaySalary.toLocaleString("en-IN")}`} tone="from-amber-500 to-orange-500" />
+          </div>
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          {/* Monthly enrollment trend */}
+          <div className="glass p-6">
+            <h2 className="panel-title flex items-center gap-2 mb-1">
+              <TrendingUp className="h-5 w-5 text-emerald-500" />
+              Enrollment Momentum
+            </h2>
+            <p className="mb-4 text-sm text-slate-500">
+              Monthly enrollments across your course catalogue.
+            </p>
+            {enrollmentsLoading ? (
+              <SkeletonBlock className="h-56 rounded-xl" />
+            ) : monthlyEnrollments.length === 0 ? (
+              <div className="flex h-56 flex-col items-center justify-center text-slate-400">
+                <TrendingUp className="mb-2 h-8 w-8 opacity-30" />
+                <p className="text-sm font-medium">No enrollments recorded yet</p>
+                <p className="mt-1 text-xs text-slate-300">Trend appears once students enroll</p>
+              </div>
+            ) : (
+              <div className="h-56 animate-fade-in">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={monthlyEnrollments} barGap={4}>
+                    <defs>
+                      <linearGradient id="gradMom" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#4f46e5" />
+                        <stop offset="100%" stopColor="#6366f1" />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                    <XAxis dataKey="month" tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
+                    <Tooltip
+                      cursor={{ fill: "rgba(99,102,241,0.06)" }}
+                      contentStyle={{
+                        borderRadius: 12,
+                        border: "1px solid #e2e8f0",
+                        background: "rgba(255,255,255,0.95)",
+                        fontSize: 12,
+                        boxShadow: "0 12px 40px rgba(15,23,42,0.12)",
+                      }}
+                      formatter={(value) => [`${value}`, "enrollments"]}
+                    />
+                    <Bar dataKey="enrollments" radius={[6, 6, 0, 0]} maxBarSize={36} fill="url(#gradMom)" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+
+          {/* Market fit: demand vs your courses */}
+          <div className="glass p-6">
+            <h2 className="panel-title flex items-center gap-2 mb-1">
+              <Target className="h-5 w-5 text-violet-500" />
+              Market Fit
+            </h2>
+            <p className="mb-4 text-sm text-slate-500">
+              Share of top in-demand skills your courses cover (normalised to %).
+            </p>
+            {topSkillsLoading || coursesLoading ? (
+              <SkeletonBlock className="h-56 rounded-xl" />
+            ) : marketFitRows.length === 0 ? (
+              <div className="flex h-56 flex-col items-center justify-center text-slate-400">
+                <Target className="mb-2 h-8 w-8 opacity-30" />
+                <p className="text-sm font-medium">No market-fit data yet</p>
+              </div>
+            ) : (
+              <div className="h-56 animate-fade-in">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={marketFitRows} layout="vertical" margin={{ left: 10, right: 20 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" horizontal={false} />
+                    <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
+                    <YAxis
+                      type="category"
+                      dataKey="skill"
+                      width={110}
+                      tick={{ fontSize: 12, fill: "#475569" }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <Tooltip
+                      cursor={{ fill: "rgba(99,102,241,0.06)" }}
+                      contentStyle={{
+                        borderRadius: 12,
+                        border: "1px solid #e2e8f0",
+                        background: "rgba(255,255,255,0.95)",
+                        fontSize: 12,
+                        boxShadow: "0 12px 40px rgba(15,23,42,0.12)",
+                      }}
+                      formatter={(value, name) => [`${value}%`, name]}
+                    />
+                    <Legend verticalAlign="top" height={36} iconType="circle" iconSize={9} />
+                    <Bar dataKey="yours" name="Your courses" fill="#8b5cf6" radius={[0, 5, 5, 0]} maxBarSize={12} />
+                    <Bar dataKey="demand" name="Market demand" fill="#f59e0b" radius={[0, 5, 5, 0]} maxBarSize={12} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+          </div>
+        </div>
+
         {/* ── 4. Recent Students List ────────────────────── */}
         <div className="mb-8 animate-fade-up delay-300">
           <div className="flex items-center justify-between mb-4">
@@ -1384,6 +1624,122 @@ export default function PartnerDashboard() {
                 })}
               </div>
             </div>
+          )}
+        </div>
+
+        {/* ── NEW: Course health index ────────────────── */}
+        <div className="glass p-6 mb-8 animate-fade-up delay-150">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <div>
+              <h2 className="panel-title flex items-center gap-2">
+                <Activity className="h-5 w-5 text-emerald-500" />
+                Course health index
+              </h2>
+              <p className="text-sm text-slate-500 mt-0.5">
+                Blended score of completion, placement &amp; seat occupancy per course
+              </p>
+            </div>
+            {courseHealth.overall !== null && (
+              <span className="chip bg-gradient-to-r from-emerald-100 to-teal-100 text-emerald-700">
+                {courseHealth.overall}/100 overall health
+              </span>
+            )}
+          </div>
+
+          {healthLoading ? (
+            <div className="glass-inner rounded-2xl p-6 space-y-4">
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="space-y-2">
+                  <SkeletonBlock className="h-4 w-48" />
+                  <SkeletonBlock className="h-2.5 w-full" />
+                </div>
+              ))}
+            </div>
+          ) : courseHealth.rows.length === 0 ? (
+            <div className="glass-inner rounded-2xl p-10 text-center">
+              <Activity className="mx-auto mb-3 h-10 w-10 text-slate-300" />
+              <p className="text-slate-500 font-medium">
+                Health scores appear once courses have enrollments, surveys or seats
+              </p>
+              <p className="text-sm text-slate-400 mt-1">
+                Publish a batch with capacity to unlock occupancy scoring.
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="rounded-2xl border border-emerald-100 bg-emerald-50/60 p-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-600 mb-1">
+                    Strongest course
+                  </p>
+                  {courseHealth.best ? (
+                    <>
+                      <p className="font-bold text-slate-800">{courseHealth.best.name}</p>
+                      <p className="text-xs text-slate-500">
+                        {courseHealth.best.score}/100 · {courseHealth.best.rating} based on {courseHealth.best.factors} signal{courseHealth.best.factors !== 1 ? "s" : ""}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-sm text-slate-500">—</p>
+                  )}
+                </div>
+                <div className="rounded-2xl border border-amber-100 bg-amber-50/60 p-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-600 mb-1">
+                    Needs attention
+                  </p>
+                  {courseHealth.worst && courseHealth.worst !== courseHealth.best ? (
+                    <>
+                      <p className="font-bold text-slate-800">{courseHealth.worst.name}</p>
+                      <p className="text-xs text-slate-500">
+                        {courseHealth.worst.score}/100 · {courseHealth.worst.rating}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-sm text-slate-500">All courses performing well</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                {courseHealth.rows.map((row, i) => {
+                  const tint =
+                    row.score === null
+                      ? "bg-slate-300"
+                      : row.score >= 75
+                      ? "from-emerald-500 to-teal-500"
+                      : row.score >= 55
+                      ? "from-sky-500 to-cyan-500"
+                      : row.score >= 35
+                      ? "from-amber-500 to-orange-500"
+                      : "from-rose-500 to-red-500";
+                  const chipTint =
+                    row.score === null
+                      ? "bg-slate-100 text-slate-600"
+                      : row.score >= 75
+                      ? "bg-emerald-100 text-emerald-700"
+                      : row.score >= 55
+                      ? "bg-sky-100 text-sky-700"
+                      : row.score >= 35
+                      ? "bg-amber-100 text-amber-700"
+                      : "bg-rose-100 text-rose-700";
+                  return (
+                    <div key={row.id} className="flex items-center gap-3 animate-fade-up" style={{ animationDelay: `${i * 0.04}s` }}>
+                      <div className="w-56 min-w-0 shrink-0">
+                        <p className="truncate text-sm font-semibold text-slate-700">{row.name}</p>
+                      </div>
+                      <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
+                        <div
+                          className={`h-full rounded-full bg-gradient-to-r ${tint} transition-all duration-700`}
+                          style={{ width: `${Math.max(row.score ?? 0, 0)}%` }}
+                        />
+                      </div>
+                      <span className={`chip shrink-0 text-[11px] ${chipTint}`}>{row.score}/100</span>
+                      <span className="hidden w-28 text-right text-xs font-medium text-slate-400 sm:block">{row.rating}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
           )}
         </div>
 

@@ -107,7 +107,7 @@ async def send_notification(
 
     # Enqueue delivery on the worker (fire-and-forget; swallows broker absence).
     try:
-        from worker_queue import enqueue_delivery
+        from app.services.worker_queue import enqueue_delivery
         enqueue_delivery(str(notif.id))
     except Exception:
         pass

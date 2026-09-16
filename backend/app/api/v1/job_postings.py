@@ -72,7 +72,7 @@ async def _queue_job_alert_notifications(
         await db.flush()
         await db.refresh(notif)
         try:
-            from worker_queue import enqueue_delivery
+            from app.services.worker_queue import enqueue_delivery
             enqueue_delivery(str(notif.id))
         except Exception:
             pass

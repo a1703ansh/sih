@@ -86,6 +86,11 @@ def normalize(value: str | None) -> str:
     return " ".join(value.strip().lower().split())
 
 
+NORMALIZED_STATES: dict[str, tuple[float, float]] = {
+    normalize(name): coords for name, coords in STATE_COORDS.items()
+}
+
+
 def resolve_coordinates(state: str | None, district: str | None) -> tuple[float | None, float | None]:
     """Return (lat, lng) for a state/district, or (None, None) when unknown."""
     if district:
@@ -93,7 +98,7 @@ def resolve_coordinates(state: str | None, district: str | None) -> tuple[float 
         if coords:
             return coords
     if state:
-        coords = STATE_COORDS.get(normalize(state)) or STATE_COORDS.get(state)
+        coords = NORMALIZED_STATES.get(normalize(state))
         if coords:
             return coords
     return (None, None)

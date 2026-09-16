@@ -154,7 +154,7 @@ async def my_applications(
     return result.scalars().all()
 
 
-@router.get("/overview", dependencies=[Depends(require_role("employer", "gov_admin"))])
+@router.get("/overview")
 async def employer_applications_overview(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_role("employer", "gov_admin")),

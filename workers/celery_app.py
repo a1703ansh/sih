@@ -30,7 +30,7 @@ app.conf.task_max_retries = 3
 app.conf.beat_schedule = {
     "daily-survey-dispatch": {
         "task": "workers.tasks.survey_scheduler.dispatch_pending_surveys",
-        "schedule": crontab(hour=9, minute=0, timezone="Asia/Kolkata"),
+        "schedule": crontab(hour=9, minute=0),
     },
     "daily-job-scrape": {
         "task": "workers.tasks.job_scraper.run_job_scrape",

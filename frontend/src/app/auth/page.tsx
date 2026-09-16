@@ -53,7 +53,7 @@ export default function AuthPage() {
             <ShieldCheck className="h-7 w-7 text-white" />
           </div>
           <h1 className="text-2xl font-extrabold tracking-tight text-white">
-            Sign in to <span className="gradient-text">SkillTrace</span>
+            Sign in to <span className="gradient-text">SkillTrace AI</span>
           </h1>
           <p className="mt-1 text-sm text-slate-400">
             Access your personalized portal

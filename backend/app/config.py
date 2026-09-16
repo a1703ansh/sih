@@ -79,7 +79,7 @@ class Settings(BaseSettings):
     INDEED_PUBLISHER_ID: str = ""
     JOB_SCRAPE_MAX_PER_SECTOR: int = 25
 
-    model_config = {"env_file": ".env", "case_sensitive": True}
+    model_config = {"env_file": ".env", "case_sensitive": True, "extra": "ignore"}
 
 
 @lru_cache
