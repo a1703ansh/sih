@@ -1,0 +1,36 @@
+﻿# --- Stage 1: build ---
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package.json package-lock.json* ./
+RUN npm install --no-package-lock
+# NEXT_PUBLIC_* vars are inlined at build time, and next.config.js (incl. the /api
+# rewrite origin) is baked into the standalone output. Declared AFTER npm install so
+# the dependency layer stays cached when only these values change.
+ARG NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ARG BACKEND_INTERNAL_URL=http://backend:8000
+ENV BACKEND_INTERNAL_URL=$BACKEND_INTERNAL_URL
+COPY . .
+# AGENTS.md: "npm run build" fails only on the Windows host (corrupt @next/swc-
+# win32-x64-msvc from the npm mirror). Inside this Linux container npm installs
+# the correct @next/swc-linux-* binary, so the production build works.
+RUN npm run build
+
+# --- Stage 2: standalone production runtime (slim) ---
+# `output: "standalone"` in next.config.js vendors all runtime deps into
+# .next/standalone/, so this image needs NO node_modules install at runtime.
+# Canonical layout: server.js + vendored node_modules at /app root, with the
+# static chunks at /app/.next/static (the standalone server resolves them relative
+# to its own directory). Copying only `.next` would 404 every /_next/static/* asset
+# and serve an unstyled, non-interactive page.
+FROM node:20-alpine
+WORKDIR /app
+ENV NODE_ENV=production
+ENV HOSTNAME=0.0.0.0
+ENV PORT=3000
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+# NOTE: if a frontend/public/ directory is ever added, also copy it:
+#   COPY --from=builder /app/public ./public
+EXPOSE 3000
+CMD ["node", "server.js"]

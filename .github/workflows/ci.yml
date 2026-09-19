@@ -38,7 +38,9 @@ jobs:
 
       - name: Lint
         working-directory: backend
-        run: ruff check .
+        # AGENTS.md: full `ruff check` is noisy by design (project-intentional
+        # E712/T201 style). The F-class gate is the one this repo maintains.
+        run: python -m ruff check app/ --select F401,F811,F821
 
       - name: Type check
         working-directory: backend
@@ -54,7 +56,7 @@ jobs:
           POSTGRES_DB: skilltrace_test
           REDIS_HOST: localhost
           SECRET_KEY: test-secret-key-for-ci
-        run: pytest -v --tb=short || true
+        run: pytest -v --tb=short
 
   frontend:
     runs-on: ubuntu-latest
@@ -74,8 +76,8 @@ jobs:
 
       - name: Type check
         working-directory: frontend
-        run: npm run type-check || true
+        run: npm run type-check
 
       - name: Build
         working-directory: frontend
-        run: npm run build || true
+        run: npm run build

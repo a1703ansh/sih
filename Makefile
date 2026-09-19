@@ -58,3 +58,19 @@ db-down:
 
 rebuild:
 	docker compose up --build --force-recreate
+
+
+.PHONY: prod-up prod-migrate prod-down prod-logs
+
+prod-up:
+	docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod up -d --build postgres redis backend worker beat flower frontend-prod
+
+prod-migrate:
+	docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod exec backend alembic upgrade head
+
+prod-down:
+	docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod down
+
+prod-logs:
+	docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod logs -f
+

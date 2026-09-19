@@ -1,5 +1,5 @@
 ﻿services:
-  # â”€â”€â”€ PostgreSQL â”€â”€â”€
+  # --- PostgreSQL ---
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -7,8 +7,6 @@
       POSTGRES_USER: skilltrace
       POSTGRES_PASSWORD: skilltrace_dev_secret
       POSTGRES_DB: skilltrace
-    ports:
-      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -17,12 +15,15 @@
       timeout: 5s
       retries: 5
 
-  # â”€â”€â”€ Redis â”€â”€â”€
+  # NOTE(prod): postgres is NOT published to the host by default — the backend,
+  # worker, beat and flower services all reach it over the compose network
+  # (POSTGRES_HOST=postgres). Re-add `ports: - "5433:5432"` here only if you need
+  # to run host-side DB tools (the Makefile db-shell uses `compose exec`, so it
+  # does not need it). docker-compose.prod.yml keeps this hardening in place.
+  # --- Redis ---
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    ports:
-      - "6380:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -31,37 +32,20 @@
       timeout: 5s
       retries: 5
 
-  # â”€â”€â”€ Elasticsearch â”€â”€â”€
-  elasticsearch:
-    image: elasticsearch:8.14.0
-    restart: unless-stopped
-    environment:
-      - discovery.type=single-node
-      - xpack.security.enabled=false
-      - ES_JAVA_OPTS=-Xms512m -Xmx512m
-    ports:
-      - "9200:9200"
-    volumes:
-      - es_data:/usr/share/elasticsearch/data
-    healthcheck:
-      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q '\"status\":\"green\"\\|\"status\":\"yellow\"'"]
-      interval: 10s
-      timeout: 10s
-      retries: 10
-
-  # â”€â”€â”€ Backend (FastAPI) â”€â”€â”€
+  # --- Backend (FastAPI) ---
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      # Loopback-only: dev reaches http://localhost:8000 unchanged; the API is
+      # never exposed directly to the host network.
+      - "127.0.0.1:8000:8000"
     env_file: .env
     environment:
       POSTGRES_HOST: postgres
       REDIS_HOST: redis
-      ELASTICSEARCH_URL: http://elasticsearch:9200
     depends_on:
       postgres:
         condition: service_healthy
@@ -72,7 +56,7 @@
     command: >
       uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
-  # â”€â”€â”€ Celery Worker â”€â”€â”€
+  # --- Celery Worker ---
   worker:
     build:
       context: ./backend
@@ -82,7 +66,6 @@
     environment:
       POSTGRES_HOST: postgres
       REDIS_HOST: redis
-      ELASTICSEARCH_URL: http://elasticsearch:9200
       PYTHONPATH: /
     working_dir: /
     depends_on:
@@ -99,7 +82,7 @@
       --concurrency=4
       -Q default,surveys,scraper,nlp,notifications
 
-  # â”€â”€â”€ Celery Beat (Scheduler) â”€â”€â”€
+  # --- Celery Beat (Scheduler) ---
   beat:
     build:
       context: ./backend
@@ -121,7 +104,7 @@
       celery -A workers.celery_app:app beat
       --loglevel=info
 
-  # â”€â”€â”€ Flower (Worker Monitor) â”€â”€â”€
+  # --- Flower (Worker Monitor) ---
   flower:
     build:
       context: ./backend
@@ -140,11 +123,9 @@
         condition: service_healthy
     volumes:
       - ./workers:/workers
-    command: >
-      sh -c "pip install -q flower==2.0.1 &&
-      python -m flower flower --port=5555"
+    command: python -m flower flower --port=5555
 
-  # â”€â”€â”€ Frontend (Next.js) â”€â”€â”€
+  # --- Frontend (Next.js dev server, hot reload) ---
   frontend:
     build:
       context: ./frontend
@@ -153,11 +134,31 @@
     ports:
       - "3000:3000"
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api/v1}
+      BACKEND_INTERNAL_URL: http://backend:8000
     volumes:
       - ./frontend/src:/app/src
+
+  # --- Frontend production build (opt-in): docker compose --profile prod up -d ---
+  frontend-prod:
+    profiles: ["prod"]
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api/v1}
+        # In-container backend origin for the Next.js /api rewrite. Hardcoded on
+        # purpose: it is baked into .next/routes-manifest.json at build time, and a
+        # host-facing value from .env would break the standalone server.
+        BACKEND_INTERNAL_URL: http://backend:8000
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api/v1}
+      BACKEND_INTERNAL_URL: http://backend:8000
+      NODE_ENV: production
 
 volumes:
   postgres_data:
   redis_data:
-  es_data:

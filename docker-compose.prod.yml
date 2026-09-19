@@ -1,0 +1,20 @@
+﻿# Production overlay - use with:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod up -d --build
+#
+# Differences from dev:
+#   - backend runs without --reload and with DEBUG=false (docs hidden, fail-fast SECRET_KEY guard)
+#   - the trained ML package/model (repo ./ml) is mounted so /api/v1/ml/* actually works
+#   - postgres/redis remain unpublished (base file exposes no host ports for them)
+services:
+  backend:
+    environment:
+      DEBUG: "false"
+      ENV: prod
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:3001}
+      PUBLIC_APP_BASE_URL: ${PUBLIC_APP_BASE_URL:-http://localhost:3000}
+      APP_WEB_URL: ${PUBLIC_APP_BASE_URL:-http://localhost:3000}
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    # volumes list REPLACES the base list here (compose merge rule): use the baked-in
+    # /app code from the image and add the ML mount on top.
+    volumes:
+      - ./ml:/ml

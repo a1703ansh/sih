@@ -107,5 +107,28 @@ Vocational education outcome tracking & labor analytics platform.
   `useMyNotifications`, `useNotificationStats`, `markNotificationRead`,
   `sendNotification` in `useDashboard.ts`.
 
+## Deployment (post-Sprint-11 hardening)
+- Dev stays: `docker compose up --build -d` (`make dev`). Hot-reload, DEBUG on, Swagger visible.
+- Prod-style on a VM: `docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod up -d --build`
+  (added as `make prod-up`).
+  - backend: no `--reload`, DEBUG=false, Swagger/Redoc hidden, and fail-fast if the placeholder
+    `SECRET_KEY` is still set (`config.get_settings` guard). CORS origins from `CORS_ORIGINS` (CSV).
+  - `./ml` is volume-mounted onto backend so the placement model is loadable; `/api/v1/ml/*`
+    returns real scores (model trained via `python -m ml.scripts.train`).
+  - postgres/redis are NOT published to the host.
+  - `frontend-prod` (port 3001): standalone Next build (`output: "standalone"` in next.config.js,
+    `frontend/Dockerfile.prod`) — slim ~460 MB image; the Linux-container `next build` works
+    (only the Windows-host SWC binary is corrupt — keep that note above). Its runtime stage must copy `.next/standalone` -> /app AND `.next/static` -> /app/.next/static; copying only `.next` 404s every /_next/static asset and serves an unstyled page.
+- Frontend API wiring:
+  - `NEXT_PUBLIC_API_URL` (build arg + runtime env on both frontends) is the URL the
+    BROWSER calls - set it to the public backend URL on a remote host.
+  - `BACKEND_INTERNAL_URL` is the in-Docker origin for the Next.js server-side `/api`
+    rewrite; hardcoded to `http://backend:8000` in docker-compose.yml because it is baked
+    into `.next/routes-manifest.json` at build time (`frontend-prod`). Never point it at a
+    localhost value from `.env` - that silently breaks the production frontend.
+- `make prod-up` starts an explicit service list (postgres redis backend worker beat flower
+  frontend-prod), so the dev `next dev` server on :3000 is not exposed. Run `make prod-migrate`
+  once after first boot (there is no auto-migration at startup).
+
 
 

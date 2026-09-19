@@ -1,0 +1,68 @@
+# Render Blueprint for the SkillTrace demo deploy (free tier).
+#   - free web service (512 MB, sleeps after 15 min idle, ~1 min cold start)
+#   - free managed Postgres (1 GB; Render auto-deletes it 30 days after creation)
+#   - Redis/Celery intentionally absent: Render free has no worker/cron plans,
+#     and app/services/worker_queue.py swallows broker errors so the API stays up
+#     with Notification rows left `queued`.
+#
+# Deploy: Render dashboard -> New -> Blueprint -> select this repo.
+services:
+  - type: postgres
+    name: skilltrace-db
+    plan: free
+
+  - type: web
+    name: skilltrace-api
+    runtime: docker
+    dockerfilePath: render.Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/v1/ml/health
+    autoDeploy: true
+    envVars:
+      # Prod guard: app.config raises at boot when DEBUG=false and SECRET_KEY is
+      # still "change-me-..."; generateValue avoids that.
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ENV
+        value: prod
+      - key: DEBUG
+        value: "false"
+      # UPDATE AFTER THE VERCELL DEPLOY: replace with your real app URL
+      # (e.g. https://skilltrace-XXXX.vercel.app). The browser calls the API
+      # cross-origin, so CORS_ORIGINS must contain exactly this origin.
+      - key: CORS_ORIGINS
+        value: https://skilltrace.vercel.app
+      - key: PUBLIC_APP_BASE_URL
+        value: https://skilltrace.vercel.app
+      - key: APP_WEB_URL
+        value: https://skilltrace.vercel.app
+      - key: POSTGRES_HOST
+        fromDatabase:
+          name: skilltrace-db
+          property: host
+      - key: POSTGRES_PORT
+        fromDatabase:
+          name: skilltrace-db
+          property: port
+      - key: POSTGRES_USER
+        fromDatabase:
+          name: skilltrace-db
+          property: user
+      - key: POSTGRES_PASSWORD
+        fromDatabase:
+          name: skilltrace-db
+          property: password
+      - key: POSTGRES_DB
+        fromDatabase:
+          name: skilltrace-db
+          property: database
+      # Flip to "true" for one boot of demo data (the startup chain runs
+      # python -m app.seeds), then set back to false.
+      - key: SEED_ON_START
+        value: "false"
+      # Optional integrations - add in the Render dashboard once you have keys:
+      #   TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_NUMBER,
+      #   TWILIO_SMS_NUMBER, TWILIO_WEBHOOK_SECRET, MSG91_AUTH_KEY,
+      #   MSG91_SENDER_ID, INDEED_PUBLISHER_ID,
+      #   DIGILOCKER_CLIENT_ID/SECRET,
+      #   DIGILOCKER_REDIRECT_URI=https://<name>.onrender.com/api/v1/auth/digilocker/callback

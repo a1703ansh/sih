@@ -6,7 +6,10 @@ class Settings(BaseSettings):
     # ─── App ───
     APP_NAME: str = "SkillTrace AI"
     APP_VERSION: str = "0.1.0"
+    ENV: str = "dev"  # dev | stage | prod
     DEBUG: bool = True
+    # Comma-separated list of allowed browser origins for CORS.
+    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:3001"
     APP_WEB_URL: str = "http://localhost:3000"
     PUBLIC_APP_BASE_URL: str = "http://localhost:3000"
     SECRET_KEY: str = "change-me-to-a-64-char-random-string-in-production"
@@ -19,6 +22,10 @@ class Settings(BaseSettings):
     POSTGRES_USER: str = "skilltrace"
     POSTGRES_PASSWORD: str = "skilltrace_dev_secret"
     POSTGRES_DB: str = "skilltrace"
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
 
     @property
     def DATABASE_URL(self) -> str:
@@ -84,4 +91,11 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    settings = Settings()
+    if not settings.DEBUG and settings.SECRET_KEY.startswith("change-me-to"):
+        raise RuntimeError(
+            "SECRET_KEY is still the insecure placeholder. Generate a random one "
+            "with `python -c \"import secrets; print(secrets.token_hex(32))\"` and "
+            "set it in .env before deploying with DEBUG=false."
+        )
+    return settings
