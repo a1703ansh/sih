@@ -61,7 +61,7 @@ services:
       # is safe to leave "true", but flip back to "false" after the "Seed
       # complete" log for the cleanest deploy flow.
       - key: SEED_ON_START
-        value: "true"
+        value: "false"
       # Optional integrations - add in the Render dashboard once you have keys:
       #   TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_NUMBER,
       #   TWILIO_SMS_NUMBER, TWILIO_WEBHOOK_SECRET, MSG91_AUTH_KEY,
