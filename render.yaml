@@ -6,18 +6,21 @@
 #     with Notification rows left `queued`.
 #
 # Deploy: Render dashboard -> New -> Blueprint -> select this repo.
-services:
-  - type: postgres
-    name: skilltrace-db
+# Render Postgres lives in the root-level `databases` list (there is no
+# `type: postgres` for services).
+databases:
+  - name: skilltrace-db
     plan: free
 
+services:
   - type: web
     name: skilltrace-api
     runtime: docker
+    plan: free
     dockerfilePath: render.Dockerfile
     dockerContext: .
     healthCheckPath: /api/v1/ml/health
-    autoDeploy: true
+    autoDeployTrigger: commit
     envVars:
       # Prod guard: app.config raises at boot when DEBUG=false and SECRET_KEY is
       # still "change-me-..."; generateValue avoids that.
