@@ -30,15 +30,12 @@ services:
         value: prod
       - key: DEBUG
         value: "false"
-      # UPDATE AFTER THE VERCELL DEPLOY: replace with your real app URL
-      # (e.g. https://skilltrace-XXXX.vercel.app). The browser calls the API
-      # cross-origin, so CORS_ORIGINS must contain exactly this origin.
       - key: CORS_ORIGINS
-        value: https://skilltrace.vercel.app
+        value: https://frontend-three-wine-47.vercel.app
       - key: PUBLIC_APP_BASE_URL
-        value: https://skilltrace.vercel.app
+        value: https://frontend-three-wine-47.vercel.app
       - key: APP_WEB_URL
-        value: https://skilltrace.vercel.app
+        value: https://frontend-three-wine-47.vercel.app
       - key: POSTGRES_HOST
         fromDatabase:
           name: skilltrace-db
