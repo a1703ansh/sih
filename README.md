@@ -207,8 +207,13 @@ make migrate        # docker compose exec backend alembic upgrade head
 make seed           # docker compose exec backend python -m app.seeds
 ```
 
-Creates training partners, courses, employers, candidates, enrollments,
-outcomes, survey templates, users, and admin accounts.
+Seeds a rich demo dataset **idempotently** (training partners, employers,
+courses, candidates, enrollments, employment outcomes across 3/6/12-month
+intervals, job postings, applications, matches, shortlists, scheme-analytics
+rows, skills, survey templates, and users). The seeder matches every entity
+against its natural key and only inserts missing rows, so `python -m app.seeds`
+is safe to run any number of times — on a fresh DB it seeds everything, on an
+existing DB it just tops up whatever is missing.
 
 ### 5. Use the app
 
@@ -339,10 +344,45 @@ Free-tier caveats to know:
 - Free Postgres is auto-deleted 30 days after creation — you must refresh it.
 - 512 MB RAM / 0.1 vCPU; service sleeps after 15 min idle (~1 min cold start);
   750 instance hours + 500 build minutes per month.
-- Set `SEED_ON_START=true` in `render.yaml` on first deploy to load demo data,
-  then set it to `false`.
+- `SEED_ON_START=true` in `render.yaml` seeds demo data on boot. The seeder is
+  idempotent, so leaving the flag on is harmless (re-runs are no-ops) — but
+  flipping it to `true` once and then to `false` after "Seed complete" log is
+  still the cleanest deploy flow. After a free-Postgres expiry/refresh, simply
+  flip the flag `true` again to reseed a brand-new database.
 - Before deploying the frontend, replace `CORS_ORIGINS` in `render.yaml` with
   your real Vercel origin.
+
+#### Keeping the free tier warm (uptime guidance)
+
+These two platforms sleep on completely different clocks:
+
+- **Vercel frontend**: never spins down from inactivity — the CDN and
+  serverless functions stay available on the Hobby plan, so **do not** waste a
+  cron job pinging it. Its limits are monthly bandwidth/function-count, not
+  idle-related.
+- **Render backend (free)**: sleeps after **15 minutes** without inbound
+  traffic and takes ~1 minute to cold-start on the next request. Because the
+  two are on separate hosts, pinging the Vercel URL keeps *nothing* warm — a
+  keep-warm job must hit the backend, e.g.:
+
+  ```
+  https://skilltrace-api-6j5j.onrender.com/health   (any interval < 15 min)
+  ```
+
+  Use **cron-job.org** (free, 24/7, intervals down to 1 min) or **UptimeRobot**
+  (free, 5-min checks); GitHub Actions schedules auto-disable after 60 days of
+  repo inactivity, so they're a weak choice here.
+
+  ⚠️ **Hour-budget caveat:** awake time consumes the workspace's
+  **750 free instance-hours/month** (a 31-day month is ~744 h). Keeping one
+  backend awake 24/7 uses nearly the whole allowance — which fits for a single
+  service but means a *second* always-on free service will push you over the
+  cap, and Render **suspends all free services in the workspace** until the
+  month resets. Monitor the instance-hours in the Render dashboard over the
+  month.
+
+- **Free Postgres** expires 30 days after creation regardless of any pings;
+  after a refresh, re-run the seeder (now safe to repeat) to rebuild demo data.
 
 Both options keep the same API; `package.json` scripts and the worker/beat
 services are only needed when you self-host.

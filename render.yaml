@@ -56,10 +56,12 @@ services:
         fromDatabase:
           name: skilltrace-db
           property: database
-      # Flip to "true" for one boot of demo data (the startup chain runs
-      # python -m app.seeds), then set back to false.
+      # Starts demo-data seeding on boot (startup chain runs python -m app.seeds
+      # after alembic). The seeder is idempotent, so a re-run is a no-op and it
+      # is safe to leave "true", but flip back to "false" after the "Seed
+      # complete" log for the cleanest deploy flow.
       - key: SEED_ON_START
-        value: "false"
+        value: "true"
       # Optional integrations - add in the Render dashboard once you have keys:
       #   TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_NUMBER,
       #   TWILIO_SMS_NUMBER, TWILIO_WEBHOOK_SECRET, MSG91_AUTH_KEY,
