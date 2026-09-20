@@ -26,6 +26,7 @@ from app.models.employment_outcome import EmploymentOutcome
 from app.models.job_application import JobApplication
 from app.models.job_posting import JobPosting
 from app.models.scheme_analytics import SchemeAnalytics
+from app.models.skill_gap import SkillGapScore
 from app.models.skill_taxonomy import SkillTaxonomy
 from app.models.survey_template import SurveyTemplate
 from app.models.training_partner import TrainingPartner
@@ -776,6 +777,63 @@ async def seed() -> None:
             added += int(created)
         counts["shortlists"] = (added, len(SHORTLISTS) - added)
 
+        # ─── Skill Gap Scores (heatmap / regional) ───
+        # Demand-vs-supply per district derived from the seeded candidates and
+        # job postings. Mirrors app/services/skill_gap_engine.py so the gov
+        # heatmap (/skill-gap/heatmap-data) and Top Deficit Skills panel
+        # (/skill-gap/regional) have data without a worker. Natural key:
+        # (state, district, sector, skill_name).
+        sector_map = {name: sector for (name, _category, sector, _t, _ts) in SKILL_TAXONOMY}
+        sector_map.update({
+            "Git": "IT", "CI/CD": "IT", "PostgreSQL": "IT", "Gmail": "IT",
+            "Word": "IT", "PowerPoint": "IT", "Marketing": "Marketing",
+            "Motor Installation": "Electrical", "Safety": "Electrical",
+            "Hygiene": "Healthcare",
+        })
+        demand_by_region: dict[tuple[str, str], dict[str, int]] = {}
+        supply_by_region: dict[tuple[str, str], dict[str, int]] = {}
+        for cand in candidates.values():
+            key = (cand.state or "", cand.district or "")
+            bucket = supply_by_region.setdefault(key, {})
+            for skill in (cand.skill_tags or []):
+                bucket[skill] = bucket.get(skill, 0) + 1
+        for posting in postings_by_title.values():
+            if not posting.is_active:
+                continue
+            key = (posting.state or "", posting.district or "")
+            bucket = demand_by_region.setdefault(key, {})
+            for skill in (posting.required_skills or []):
+                bucket[skill] = bucket.get(skill, 0) + 1
+        gap_added = 0
+        gap_existing = 0
+        for (state, district) in sorted(set(supply_by_region) | set(demand_by_region)):
+            demand = demand_by_region.get((state, district), {})
+            supply = supply_by_region.get((state, district), {})
+            max_d = max(demand.values()) if demand else 1
+            max_s = max(supply.values()) if supply else 1
+            for skill in sorted(set(demand) | set(supply)):
+                d = demand.get(skill, 0) / max_d * 100
+                s = supply.get(skill, 0) / max_s * 100
+                gap = round(d * 0.6 - s * 0.4, 2)
+                direction = "deficit" if gap > 5 else ("surplus" if gap < -5 else "balanced")
+                _, created = await get_or_create(
+                    db, SkillGapScore,
+                    defaults={
+                        "demand_score": round(d, 2),
+                        "supply_score": round(s, 2),
+                        "gap_score": gap,
+                        "gap_direction": direction,
+                        "model_version": "seed-demo",
+                    },
+                    state=state or None,
+                    district=district or None,
+                    sector=sector_map.get(skill, "general"),
+                    skill_name=skill,
+                )
+                gap_added += int(created)
+                gap_existing += int(not created)
+        counts["skill_gap_scores"] = (gap_added, gap_existing)
+
         # ─── Scheme Analytics ───
         added = 0
         for (scheme_id, tp_name, period, state, district, enrolled, completed,
@@ -853,6 +911,7 @@ async def seed() -> None:
             ("Job Applications", "job_applications"),
             ("Job-Candidate Matches", "job_matches"),
             ("Employer Shortlists", "shortlists"),
+            ("Skill Gap Scores", "skill_gap_scores"),
             ("Scheme Analytics Rows", "scheme_analytics"),
             ("Skill Taxonomy", "skill_taxonomy"),
             ("Survey Templates", "survey_templates"),
@@ -878,6 +937,7 @@ async def seed() -> None:
         print(f"  - Users: {await count(User)}")
         print(f"  - Job Postings: {await count(JobPosting)}")
         print(f"  - Applications: {await count(JobApplication)}")
+        print(f"  - Skill Gap Scores: {await count(SkillGapScore)}")
         placed = await count(EmploymentOutcome, EmploymentOutcome.is_employed == True)
         total_out = await count(EmploymentOutcome)
         rate = round(placed / max(total_out, 1) * 100, 2) if total_out else None
